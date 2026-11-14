@@ -1,0 +1,49 @@
+# ===== Segredos e variáveis de ambiente =====
+# Ignora .env e todas as variantes (.env.local, .env.production, .env.vercel…),
+# exceto os arquivos de exemplo sem credenciais.
+.env
+.env.*
+*.env
+!.env.example
+!**/.env.example
+.env.example
+
+# Credenciais OAuth baixadas dos consoles (Google: client_secret_*.json etc.)
+client_secret*.json
+credentials*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+token*.json
+
+# ===== Vercel =====
+.vercel/
+
+# ===== Dependências =====
+node_modules/
+
+# ===== Builds gerados =====
+server/dist/
+web/dist/
+dist/
+coverage/
+*.tsbuildinfo
+
+# ===== Dados locais do app (DATA_DIR, padrão: data/) =====
+# Contém lotes, fila, tokens criptografados (connections.json), vídeos e capas enviados.
+data/
+
+# Arquivos temporários de upload e gravação atômica
+*.part
+*.tmp
+
+# ===== Logs =====
+*.log
+logs/
+npm-debug.log*
+
+# ===== Sistema / editor =====
+.DS_Store
+Thumbs.db
+desktop.ini

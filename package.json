@@ -1,0 +1,24 @@
+{
+  "name": "agendador-junior",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Agendamento em lote de vídeos curtos para Facebook Reels, YouTube Shorts, Instagram Reels e TikTok",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "build:web": "npm run build -w web",
+    "start": "npm run start -w server",
+    "test": "npm test -w server && npm test -w web",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc -p api/tsconfig.json"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
