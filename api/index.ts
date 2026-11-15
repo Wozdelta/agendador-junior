@@ -6,16 +6,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const { loadConfig } = await import('../server/src/config.js');
     const config = loadConfig();
-    if (config.runtime === 'vercel' && (config.storage !== 'redis' || config.mediaStorage !== 'blob' || !config.tokenKey || !config.cronSecret)) {
-      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ error: 'Serviço ainda não configurado. Conecte Redis e Blob e defina TOKEN_ENCRYPTION_KEY e CRON_SECRET na Vercel.', code: 'service_not_configured' }));
-      return;
-    }
     const [{ createContext }, { createApp }] = await Promise.all([
       import('../server/src/context.js'), import('../server/src/app.js'),
     ]);
     // One context per request avoids shared mutable mode/snapshots under Fluid concurrency.
-    const ctx = await createContext({ config });
+    const ctx = await createContext({ config, lazy: true });
     const url = new URL(req.url ?? '/', 'https://internal');
     const route = url.searchParams.get('__path');
     if (route !== null) {

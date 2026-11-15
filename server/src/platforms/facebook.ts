@@ -48,7 +48,7 @@ export class FacebookAdapter implements PlatformAdapter {
       capabilities: caps,
       notes: [
         cfg.appId ? '' : 'Preencha META_APP_ID e META_APP_SECRET no .env.',
-        'Agendamento nativo de Reels: de 10 minutos a 29 dias. Datas além disso ficam na fila do app até a janela abrir.',
+        this.ctx.config.runtime === 'vercel' ? 'Datas além da janela nativa precisam ser preparadas novamente perto do dia ou publicadas manualmente; não há espera automática.' : 'Agendamento nativo de Reels: de 10 minutos a 29 dias. Datas além disso ficam na fila local até a janela abrir.',
         cfg.reelsCustomCover ? '' : 'Capa personalizada de Reels desativada: a imagem fica disponível para uso manual.',
       ].filter(Boolean),
     };
@@ -188,6 +188,13 @@ export class FacebookAdapter implements PlatformAdapter {
     } catch (err: any) {
       const schedulingRejected = err instanceof PermanentError && /schedul/i.test(err.message);
       if (schedulingRejected && !queueMode) {
+        if (this.ctx.config.runtime === 'vercel') {
+          await rt.save(x => {
+            x.state = 'manual_action'; x.manualReason = 'platform_manual'; x.nextRunAt = undefined;
+            x.delayNote = 'A plataforma recusou o agendamento nativo. Confira o vídeo enviado e publique manualmente; não há fila futura nesta versão.';
+          });
+          return;
+        }
         if (!this.ctx.config.meta.allowDirectPublishFallback) {
           throw new PermanentError(
             `A Página não aceitou o agendamento nativo (${err.message}). Ative META_ALLOW_DIRECT_PUBLISH_FALLBACK para publicar pela fila do app no horário.`,

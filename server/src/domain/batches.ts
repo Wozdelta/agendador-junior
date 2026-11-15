@@ -187,12 +187,17 @@ export async function removeMediaFile(mc: ModeContext, mediaId?: string): Promis
   });
 }
 
+function accountFor(ctx: AppContext, mc: ModeContext, p: Platform): AccountChoice {
+  if (ctx.config.runtime === 'vercel' && (p === 'instagram' || p === 'tiktok')) return { accountId: 'manual', accountName: 'Publicação manual na plataforma', strategy: 'manual' };
+  return adapterFor(ctx, mc.mode, p).account(mc);
+}
+
 function accountsFor(ctx: AppContext, mc: ModeContext, b: Batch) {
   const out: Partial<Record<Platform, AccountChoice | { error: string }>> = {};
   for (const p of PLATFORMS) {
     if (!b.platforms[p]) continue;
     try {
-      out[p] = adapterFor(ctx, mc.mode, p).account(mc);
+      out[p] = accountFor(ctx, mc, p);
     } catch (err: any) {
       out[p] = { error: err.message };
     }
@@ -239,7 +244,7 @@ export function summarize(ctx: AppContext, mc: ModeContext, b: Batch): BatchSumm
       const acc = accounts[p];
       const strategy = acc && !('error' in acc) ? acc.strategy : undefined;
       if (p === 'facebook' && strategy === 'native' && new Date(it.scheduledAt).getTime() - now > 29 * 86400_000) {
-        issues.push({ level: 'info', platform: p, itemId: it.id, message: `Vídeo ${it.order} · Facebook: fica na fila do app até entrar na janela de 29 dias do agendamento nativo.` });
+        issues.push({ level: 'info', platform: p, itemId: it.id, message: ctx.config.runtime === 'vercel' ? `Vídeo ${it.order} · Facebook: retome a preparação manualmente quando entrar na janela nativa ou publique diretamente na plataforma.` : `Vídeo ${it.order} · Facebook: fica na fila local até entrar na janela nativa.` });
       }
       if (p === 'tiktok' && strategy === 'direct' && (!it.platforms.tiktok.directPostConsent || !it.platforms.tiktok.privacyLevel)) {
         issues.push({ level: 'error', platform: p, itemId: it.id, message: `Vídeo ${it.order} · TikTok: escolha a privacidade e confirme o consentimento do Direct Post.` });
@@ -250,7 +255,7 @@ export function summarize(ctx: AppContext, mc: ModeContext, b: Batch): BatchSumm
     }
   }
   if (enabled.includes('instagram')) {
-    issues.push({ level: 'info', platform: 'instagram', message: 'Instagram: a publicação acontece pela fila do app às 12:00; configure a execução automática na nuvem.' });
+    issues.push({ level: 'info', platform: 'instagram', message: ctx.config.runtime === 'vercel' ? 'Instagram: publique manualmente no horário planejado. Não há execução futura nesta versão.' : 'Instagram: a publicação acontece pela fila local às 12:00.' });
   }
   if (enabled.includes('tiktok')) {
     const a = accounts.tiktok;
@@ -302,7 +307,7 @@ export async function confirmBatch(ctx: AppContext, mc: ModeContext, batchId: st
       const media = mc.media.get(it.mediaId!)!;
       for (const p of PLATFORMS) {
         if (!b.platforms[p] || !it.platforms[p].enabled) continue;
-        const acc = adapterFor(ctx, mc.mode, p).account(mc);
+        const acc = accountFor(ctx, mc, p);
         const texts = it.platforms[p];
         const manual = acc.strategy === 'manual';
         created.push({
@@ -314,7 +319,7 @@ export async function confirmBatch(ctx: AppContext, mc: ModeContext, batchId: st
           accountId: acc.accountId,
           accountName: acc.accountName,
           state: manual ? 'manual_action' : 'queued',
-          manualReason: manual ? 'tiktok_manual' : undefined,
+          manualReason: manual ? (p === 'tiktok' ? 'tiktok_manual' : 'platform_manual') : undefined,
           plannedAt: it.scheduledAt,
           attempts: 0,
           nextRunAt: manual ? undefined : nowIso,

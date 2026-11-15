@@ -300,7 +300,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
 
       {done && (
         <div className="alert success">
-          Agendamento registrado: {done.count} tarefa(s) de publicação. Acompanhe em <a href="#/agenda">Agenda</a>.
+          Lote registrado: {done.count} tarefa(s). Acompanhe em <a href="#/agenda">Agenda</a>. {!settings.backgroundWorker && 'Prepare os envios nativos na Agenda; as outras plataformas exigem publicação manual.'}
         </div>
       )}
       {error && (

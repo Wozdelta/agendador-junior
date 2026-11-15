@@ -6,7 +6,7 @@ export function deriveKey(masterB64: string, info: string): Buffer {
   return Buffer.from(crypto.hkdfSync('sha256', Buffer.from(masterB64, 'base64'), Buffer.alloc(0), info, 32));
 }
 
-/** Compara segredos em tempo constante (ex.: CRON_SECRET). */
+/** Compara segredos em tempo constante. */
 export function safeEqual(a: string | undefined, b: string): boolean {
   if (!a || !b) return false;
   const x = crypto.createHash('sha256').update(a).digest();

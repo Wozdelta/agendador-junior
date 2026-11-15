@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Config } from './config.js';
 import type { AppMode } from './shared/types.js';
-import { FileBackend, FileDocBackend, JsonCollection, JsonDoc, RedisBackend, type CollectionBackend } from './lib/store.js';
+import { FileBackend, FileDocBackend, JsonCollection, JsonDoc, RedisBackend, MemoryBackend, type CollectionBackend } from './lib/store.js';
 import { RedisRest } from './lib/redis.js';
 import { TokenVault } from './lib/crypto.js';
 import { createFfprobe, type Prober } from './lib/media.js';
@@ -38,6 +38,7 @@ export interface ModeContext {
 
 
 export interface AppContext {
+  lazy: boolean;
   config: Config;
   clock: Clock;
   prober: Prober;
@@ -79,6 +80,7 @@ function factory(config: Config, fetchImpl: FetchLike): Factory {
       doc: (mode, name) => new RedisBackend(redis, key(mode, name)),
     };
   }
+  if (config.runtime === 'vercel') return { col: () => new MemoryBackend(), doc: () => new MemoryBackend() };
   const file = (mode: string, name: string) => (mode ? path.join(config.dataDir, mode, `${name}.json`) : path.join(config.dataDir, `${name}.json`));
   return {
     col: (mode, name) => new FileBackend(file(mode, name)),
@@ -86,20 +88,21 @@ function factory(config: Config, fetchImpl: FetchLike): Factory {
   };
 }
 
-async function createMode(mode: AppMode, root: string, f: Factory): Promise<ModeContext> {
+async function createMode(mode: AppMode, root: string, f: Factory, lazy = false, disk = true): Promise<ModeContext> {
   const dir = path.join(root, mode);
   const mediaDir = path.join(dir, 'media');
-  await fs.mkdir(mediaDir, { recursive: true });
+  if (disk) await fs.mkdir(mediaDir, { recursive: true });
+  const ready = <T extends { load(): Promise<T> }>(value: T) => lazy ? Promise.resolve(value) : value.load();
   return {
     mode,
     dir,
     mediaDir,
-    batches: await new JsonCollection<Batch>(f.col(mode, 'batches')).load(),
-    tasks: await new JsonCollection<Task>(f.col(mode, 'tasks')).load(),
-    media: await new JsonCollection<MediaRecord>(f.col(mode, 'media')).load(),
-    idem: await new JsonCollection<IdemRecord>(f.col(mode, 'idempotency')).load(),
-    connections: await new JsonDoc<ConnectionsDoc>(f.doc(mode, 'connections'), {}).load(),
-    demo: await new JsonDoc<DemoDoc>(f.doc(mode, 'demo-remote'), { faults: {}, remote: {} }).load(),
+    batches: await ready(new JsonCollection<Batch>(f.col(mode, 'batches'))),
+    tasks: await ready(new JsonCollection<Task>(f.col(mode, 'tasks'))),
+    media: await ready(new JsonCollection<MediaRecord>(f.col(mode, 'media'))),
+    idem: await ready(new JsonCollection<IdemRecord>(f.col(mode, 'idempotency'))),
+    connections: await ready(new JsonDoc<ConnectionsDoc>(f.doc(mode, 'connections'), {})),
+    demo: await ready(new JsonDoc<DemoDoc>(f.doc(mode, 'demo-remote'), { faults: {}, remote: {} })),
   };
 }
 
@@ -108,18 +111,21 @@ export async function createContext(opts: {
   clock?: Clock;
   prober?: Prober;
   fetchImpl?: FetchLike;
+  lazy?: boolean;
 }): Promise<AppContext> {
   const { config } = opts;
-  await fs.mkdir(config.dataDir, { recursive: true });
+  if (config.runtime !== 'vercel') await fs.mkdir(config.dataDir, { recursive: true });
   const fetchImpl = opts.fetchImpl ?? fetch;
   const f = factory(config, fetchImpl);
-  const settings = await new JsonDoc<{ mode: AppMode }>(f.doc('', 'settings'), { mode: 'real' }).load();
-  const oauthUsed = await new JsonDoc<{ used: Record<string, number> }>(f.doc('', 'oauth-used'), { used: {} }).load();
+  const settings = new JsonDoc<{ mode: AppMode }>(f.doc('', 'settings'), { mode: 'real' });
+  const oauthUsed = new JsonDoc<{ used: Record<string, number> }>(f.doc('', 'oauth-used'), { used: {} });
+  if (!opts.lazy) { await settings.load(); await oauthUsed.load(); }
   const modes = {
-    demo: await createMode('demo', config.dataDir, f),
-    real: await createMode('real', config.dataDir, f),
+    demo: await createMode('demo', config.dataDir, f, opts.lazy, config.runtime !== 'vercel'),
+    real: await createMode('real', config.dataDir, f, opts.lazy, config.runtime !== 'vercel'),
   };
   const ctx: AppContext = {
+    lazy: !!opts.lazy,
     config,
     clock: opts.clock ?? systemClock,
     prober: opts.prober ?? createFfprobe(config.ffprobePath),

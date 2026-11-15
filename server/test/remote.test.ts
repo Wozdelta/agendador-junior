@@ -20,16 +20,15 @@ describe('API na Vercel sem proxy', () => {
     const config = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'vercel.json'), 'utf8'));
     expect(config.rewrites.map((r: any) => r.source)).toEqual(['/api/:path*', '/termos', '/privacidade']);
   });
-  it('Connections, Agenda, erro JSON, origem e cron autenticado', async () => {
-    const e = await makeEnv({ config: { runtime: 'vercel', appUrl: APP, cronSecret: 'test-secret', tickBudgetMs: 50 } });
+  it('Connections, Agenda, erro JSON, origem e cron removido', async () => {
+    const e = await makeEnv({ config: { runtime: 'vercel', appUrl: APP, tickBudgetMs: 50 } });
     await e.api.get('/api/connections').expect(200).expect('Content-Type', /json/);
     await e.api.get('/api/tasks').expect(200).expect('Content-Type', /json/);
     const missing = await e.api.get('/api/missing').expect(404);
     expect(missing.body.code).toBe('not_found');
     await e.api.post('/api/batches').set('Content-Type', 'application/json').send('{bad').expect(400).expect('Content-Type', /json/);
     await e.api.post('/api/batches').set('Origin', 'https://other.example').send({}).expect(403);
-    await e.api.post('/api/cron/tick').expect(401);
-    await e.api.post('/api/cron/tick').set('Authorization', 'Bearer test-secret').expect(200);
+    await e.api.post('/api/cron/tick').expect(404);
   });
   it('cinco videos com datas consecutivas ao meio-dia e status por plataforma', async () => {
     const e = await makeEnv();

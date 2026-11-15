@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppContext, ModeContext } from '../context.js';
 import type { MediaRecord } from '../domain/model.js';
-import { AppError } from './errors.js';
+import { AppError, PermanentError } from './errors.js';
 import type { RangeReader } from './mp4.js';
 
 /** Hosts aceitos para arquivos do Vercel Blob. */
@@ -30,11 +30,13 @@ export async function openMedia(ctx: AppContext, mc: ModeContext, m: MediaRecord
     if (opts.start === undefined && opts.end === undefined) return (await fetchRange(ctx, m.blobUrl)).body;
     return (await fetchRange(ctx, m.blobUrl, opts.start ?? 0, opts.end)).body;
   }
+  if (ctx.config.runtime === 'vercel') throw new PermanentError('Este arquivo só existia no disco local e não está disponível na Vercel. Publique manualmente ou envie novamente para armazenamento persistente.');
   return fs.createReadStream(path.join(mc.mediaDir, m.internalName), opts);
 }
 
 export async function readMedia(ctx: AppContext, mc: ModeContext, m: MediaRecord): Promise<Buffer> {
   if (m.blobUrl) return Buffer.from(await (await fetchRange(ctx, m.blobUrl)).arrayBuffer());
+  if (ctx.config.runtime === 'vercel') throw new PermanentError('A mídia local não está disponível na Vercel. Use o arquivo original para a publicação manual.');
   return fs.promises.readFile(path.join(mc.mediaDir, m.internalName));
 }
 

@@ -22,6 +22,7 @@ import { AppError } from '../lib/errors.js';
 import { receiveFile } from '../lib/upload.js';
 import { PLATFORMS } from '../shared/types.js';
 import { ah, idempotent, linksOf } from './middleware.js';
+import { requireMediaStorage } from '../lib/capabilities.js';
 
 export function batchRoutes(ctx: AppContext): Router {
   const r = Router();
@@ -97,6 +98,7 @@ export function batchRoutes(ctx: AppContext): Router {
   }));
 
     r.put('/batches/:id/items/:itemId/video', ah(async (req, res) => {
+    requireMediaStorage(ctx);
     if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveVideo(ctx, mc, String(req.params.id), String(req.params.itemId), req);
@@ -151,6 +153,7 @@ export function batchRoutes(ctx: AppContext): Router {
   }));
 
     r.put('/batches/:id/items/:itemId/cover', ah(async (req, res) => {
+    requireMediaStorage(ctx);
     if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveCover(ctx, mc, String(req.params.id), String(req.params.itemId), req);

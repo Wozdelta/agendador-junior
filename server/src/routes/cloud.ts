@@ -9,24 +9,12 @@ import { AppError } from '../lib/errors.js';
 import { blobReader, isBlobUrl } from '../lib/mediaio.js';
 import { probeImage, probeMp4 } from '../lib/mp4.js';
 import { sniff } from '../lib/media.js';
-import { safeEqual } from '../lib/session.js';
-import { Worker } from '../queue/worker.js';
+import { requireMediaStorage } from '../lib/capabilities.js';
 import { ah, linksOf } from './middleware.js';
 
 export function cloudRoutes(ctx: AppContext): Router {
   const r = Router();
-  r.all('/cron/tick', ah(async (req, res) => {
-    if (!safeEqual(req.get('authorization'), `Bearer ${ctx.config.cronSecret}`) || !ctx.config.cronSecret) {
-      throw new AppError(401, 'Acionamento da fila não autorizado.', undefined, 'unauthorized');
-    }
-    const worker = new Worker(ctx);
-    await worker.recover();
-    const end = Date.now() + ctx.config.tickBudgetMs;
-    for (let i = 0; i < 30 && Date.now() < end; i++) {
-      if (!(await worker.tick())) break;
-    }
-    res.json({ ok: true });
-  }));
+  r.use('/blob', (_req, _res, next) => { try { requireMediaStorage(ctx); next(); } catch (err) { next(err); } });
 
   r.post('/blob/prepare', ah(async (req, res) => {
     if (ctx.config.mediaStorage !== 'blob') throw new AppError(409, 'Blob não configurado.');

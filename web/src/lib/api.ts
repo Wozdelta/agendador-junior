@@ -85,7 +85,8 @@ export const api = {
   summary: (id: string) => call<BatchSummary>('GET', `/api/batches/${id}/summary`),
   confirm: (id: string, idem: string) => call<{ batch: BatchDTO; tasks: TaskDTO[] }>('POST', `/api/batches/${id}/confirm`, undefined, { idem }),
 
-  tasks: () => call<{ tasks: TaskDTO[]; drafts: DraftAgendaRow[] }>('GET', '/api/tasks'),
+  tasks: () => call<{ tasks: TaskDTO[]; drafts: DraftAgendaRow[]; warning?: string }>('GET', '/api/tasks'),
+  processNative: () => call<{ ok: boolean; message: string }>('POST', '/api/tasks/process-native', {}),
   taskAction: (id: string, action: 'cancel' | 'retry' | 'reschedule' | 'manual-complete' | 'resolve-review', body: unknown, idem: string) =>
     call<TaskDTO>('POST', `/api/tasks/${id}/${action}`, body, { idem }),
   editTask: (id: string, body: { title?: string; description?: string }, idem: string) => call<TaskDTO>('PATCH', `/api/tasks/${id}`, body, { idem }),

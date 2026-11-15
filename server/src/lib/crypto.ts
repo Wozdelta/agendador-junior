@@ -12,8 +12,7 @@ export class TokenVault {
       return;
     }
     const key = Buffer.from(keyB64, 'base64');
-    if (key.length !== 32) throw new Error('TOKEN_ENCRYPTION_KEY precisa ter 32 bytes em base64.');
-    this.key = key;
+    this.key = key.length === 32 ? key : null;
   }
   get available(): boolean {
     return this.key !== null;

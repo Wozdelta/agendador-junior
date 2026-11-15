@@ -5,6 +5,7 @@ import { RULES, countText } from '../../../server/src/shared/limits';
 import { api, downloadUrl, idemKey, type DraftAgendaRow } from '../lib/api';
 import { isValidBrDate } from '../lib/date';
 import { DateField } from './DateField';
+import { ManualAgenda } from './ManualAgenda';
 
 const ORDER: TaskState[] = ['draft', 'queued', 'processing', 'scheduled_remote', 'published', 'manual_action', 'late', 'failed', 'cancelled'];
 
@@ -33,6 +34,10 @@ type Dialog =
   | { kind: 'review'; task: TaskDTO; key: string };
 
 export function Agenda({ settings }: { settings: SettingsDTO }) {
+  return <><h1>Agenda</h1><ManualAgenda />{settings.serverPersistence && <ServerAgenda settings={settings} />}</>;
+}
+
+function ServerAgenda({ settings }: { settings: SettingsDTO }) {
   const [tasks, setTasks] = useState<TaskDTO[]>([]);
   const [drafts, setDrafts] = useState<DraftAgendaRow[]>([]);
   const [filter, setFilter] = useState<TaskState | 'all'>('all');
@@ -47,6 +52,7 @@ export function Agenda({ settings }: { settings: SettingsDTO }) {
       const r = await api.tasks();
       setTasks(r.tasks);
       setDrafts(r.drafts);
+      if (r.warning) setError(r.warning);
     } catch (e: any) {
       setError(e.message);
     }
@@ -87,11 +93,17 @@ export function Agenda({ settings }: { settings: SettingsDTO }) {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Agenda</h1>
+        <h2>Registros do servidor</h2>
         <p className="muted">
-          Atualiza a cada 5 s. A fila roda no backend — a página pode ficar fechada. Tolerância de atraso: {settings.lateToleranceMinutes} min.
+          {settings.backgroundWorker ? 'A fila local processa enquanto o servidor estiver ligado.' : 'Não há fila automática nesta versão. Prepare envios nativos pelo botão abaixo; só o status “Agendado na plataforma” confirma a publicação futura sem o app aberto. As demais redes são manuais.'}
         </p>
       </div>
+      {!settings.backgroundWorker && <button disabled={!!busy || !settings.oauthAvailable} onClick={async () => {
+        setBusy('native'); setError(null);
+        try { const r = await api.processNative(); window.alert(r.message); await load(); }
+        catch (err: any) { setError(err.message); }
+        finally { setBusy(null); }
+      }}>Preparar / retomar agendamentos nativos</button>}
       {error && (
         <div className="alert error" role="alert">
           {error} <button className="link" onClick={load}>Tentar de novo</button>
@@ -230,7 +242,7 @@ function ManualBox({ task }: { task: TaskDTO }) {
       <p>
         {task.manualReason === 'tiktok_inbox'
           ? 'O vídeo está na caixa de entrada do TikTok. Abra o app, cole a descrição e publique. O app ainda não considera como publicado.'
-          : `Publique manualmente no horário: baixe o vídeo, copie a descrição e poste pelo app do TikTok.`}
+          : `Publique manualmente no horário: baixe o vídeo, copie a descrição e poste em ${PLATFORM_LABEL[task.platform]}.`}
       </p>
       <pre className="caption">{task.description || '(sem descrição)'}</pre>
       <div className="row">

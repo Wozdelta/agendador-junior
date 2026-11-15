@@ -13,6 +13,8 @@ import { TikTokAdapter, tiktokAuthUrl, tiktokExchange } from '../platforms/tikto
 import { youtubeAuthUrl, youtubeExchange } from '../platforms/youtube.js';
 import { PLATFORMS, type AppMode, type Platform, type SettingsDTO } from '../shared/types.js';
 import { ah, allowedOrigins, idempotent, linksOf } from './middleware.js';
+import { hasPersistence, hasMediaStorage, requireOAuth } from '../lib/capabilities.js';
+import { Worker } from '../queue/worker.js';
 
 export function taskRoutes(ctx: AppContext): Router {
   const r = Router();
@@ -34,7 +36,16 @@ export function taskRoutes(ctx: AppContext): Router {
           platforms: PLATFORMS.filter((p) => b.platforms[p] && it.platforms[p].enabled),
         })),
       );
-    res.json({ tasks: tasks.map((t) => toTaskDTO(ctx, mc, t, linksOf(ctx, res))), drafts });
+    res.json({ tasks: tasks.map((t) => toTaskDTO(ctx, mc, t, linksOf(ctx, res))), drafts, warning: res.locals.storageWarning });
+  }));
+
+  r.post('/tasks/process-native', ah(async (_req, res) => {
+    requireOAuth(ctx);
+    const worker = new Worker(ctx);
+    await worker.recover();
+    const end = Date.now() + Math.min(ctx.config.tickBudgetMs, 240_000);
+    for (let i = 0; i < 30 && Date.now() < end; i++) if (!(await worker.tick())) break;
+    res.json({ ok: true, message: 'Ciclo concluído. Confira o status: apenas “Agendado na plataforma” confirma o agendamento nativo. Retome envios pendentes pelo botão; não há execução automática futura na Vercel.' });
   }));
 
   const action = (name: string, fn: (id: string, body: any) => Promise<any>) =>
@@ -63,6 +74,7 @@ export function mediaRoutes(ctx: AppContext): Router {
     const m = mc.media.get(String(req.params.id));
     if (!m) throw new AppError(404, 'Arquivo não encontrado.');
     if (m.blobUrl) return res.redirect(302, m.blobUrl);
+    if (ctx.config.runtime === 'vercel') throw new AppError(410, 'Este arquivo existia somente no disco local. Use o original para publicar manualmente.', undefined, 'media_unavailable');
     if (req.query.download) res.attachment(m.originalName);
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.type(m.mime);
@@ -107,12 +119,17 @@ export function settingsRoutes(ctx: AppContext): Router {
       graphVersion: ctx.config.meta.graphVersion,
       remoteAccess: ctx.config.runtime === 'vercel' || remote,
       directLinks: ctx.config.mediaStorage === 'blob' || !!ctx.config.publicBaseUrl,
+      serverPersistence: hasPersistence(ctx),
+      mediaPersistence: hasMediaStorage(ctx),
+      oauthAvailable: hasPersistence(ctx) && ctx.vault.available,
+      backgroundWorker: ctx.config.runtime !== 'vercel',
     };
   };
   r.get('/settings', (_req, res) => {
     res.json(dto(res.locals.access === 'remote'));
   });
   r.post('/settings/mode', ah(async (req, res) => {
+    if (ctx.config.runtime === 'vercel') throw new AppError(409, 'A demonstração com fila é exclusiva da execução local. A agenda manual está disponível na Vercel.', undefined, 'local_only');
     const mode = req.body?.mode;
     if (mode !== 'demo' && mode !== 'real') throw new AppError(400, 'Modo inválido.');
     if (req.body?.confirm !== true) throw new AppError(400, 'Confirme explicitamente a troca de modo.');
@@ -148,10 +165,23 @@ export function connectionRoutes(ctx: AppContext): Router {
 
   r.get('/connections', ah(async (_req, res) => {
     const mc = ctx.current();
-    res.json(await Promise.all(PLATFORMS.map((p) => adapterFor(ctx, mc.mode, p).connection(mc))));
+    res.json(await Promise.all(PLATFORMS.map(async (p) => {
+      const c = await adapterFor(ctx, mc.mode, p).connection(mc);
+      const limitations: string[] = [];
+      if (!hasPersistence(ctx)) limitations.push('Sem persistência no servidor, esta tela não salva conexões OAuth. Use a publicação manual; a agenda fica neste navegador.');
+      else if (!ctx.vault.available) limitations.push('Tokens existentes foram preservados. Para usar OAuth, configure TOKEN_ENCRYPTION_KEY com 32 bytes em base64.');
+      if (res.locals.storageWarning) limitations.push(res.locals.storageWarning);
+      if (ctx.config.runtime === 'vercel') limitations.push(p === 'youtube' || p === 'facebook'
+        ? 'Agendamento nativo é mantido quando confirmado pela plataforma. Prepare/retome o envio pelo botão na Agenda; não há fila automática futura.'
+        : 'Nesta versão, publique manualmente na plataforma. Não há processo automático no horário planejado.');
+      return { ...c, canConnect: c.configured && hasPersistence(ctx) && ctx.vault.available && !res.locals.storageWarning,
+        capabilities: ctx.config.runtime === 'vercel' ? c.capabilities.filter(k => !['queue', 'queue_fallback', 'inbox', 'direct'].includes(k)) : c.capabilities,
+        notes: [...limitations, ...c.notes] };
+    })));
   }));
 
   r.get('/connections/:platform/start', ah(async (req, res) => {
+    requireOAuth(ctx);
     if (ctx.settings.get().mode !== 'real') throw new AppError(409, 'Desative o modo demonstração para conectar contas reais.');
     const platform = String(req.params.platform) as Platform;
     if (!ctx.vault.available) throw new AppError(409, 'Defina TOKEN_ENCRYPTION_KEY no .env antes de conectar contas.');
@@ -162,16 +192,16 @@ export function connectionRoutes(ctx: AppContext): Router {
     let state: string;
     let url: string;
     if (platform === 'youtube') {
-      if (!ctx.config.google.clientId) throw new AppError(409, 'Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env.');
+      if (!ctx.config.google.clientId || !ctx.config.google.clientSecret) throw new AppError(409, 'Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET para conectar o YouTube.');
       const { verifier, challenge } = pkcePair();
       state = pack(platform, verifier);
       url = youtubeAuthUrl(ctx, state, challenge);
     } else if (platform === 'facebook' || platform === 'instagram') {
-      if (!ctx.config.meta.appId) throw new AppError(409, 'Configure META_APP_ID e META_APP_SECRET no .env.');
+      if (!ctx.config.meta.appId || !ctx.config.meta.appSecret) throw new AppError(409, 'Configure META_APP_ID e META_APP_SECRET para conectar Facebook/Instagram.');
       state = pack('facebook');
       url = metaAuthUrl(ctx, state);
     } else if (platform === 'tiktok') {
-      if (!ctx.config.tiktok.clientKey || !ctx.config.tiktok.redirectUri) {
+      if (!ctx.config.tiktok.clientKey || !ctx.config.tiktok.clientSecret || !ctx.config.tiktok.redirectUri) {
         throw new AppError(409, 'Configure TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET e TIKTOK_REDIRECT_URI (HTTPS) no .env.');
       }
       state = pack(platform);
@@ -181,6 +211,7 @@ export function connectionRoutes(ctx: AppContext): Router {
   }));
 
   r.get('/oauth/:platform/callback', ah(async (req, res) => {
+    requireOAuth(ctx);
     const platform = String(req.params.platform);
     const state = String(req.query.state ?? '');
     let pending: { nonce: string; platform: string; verifier?: string; createdAt: number; returnTo: string } | undefined;

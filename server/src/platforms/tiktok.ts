@@ -101,6 +101,7 @@ export class TikTokAdapter implements PlatformAdapter {
   constructor(private ctx: AppContext) {}
 
   private mode(mc: ModeContext): 'manual' | 'inbox' | 'direct' {
+    if (this.ctx.config.runtime === 'vercel') return 'manual';
     const c = getConn(mc, 'tiktok');
     const cfg = this.ctx.config.tiktok;
     if (!c?.tokensEnc || c.needsReconnect) return 'manual';

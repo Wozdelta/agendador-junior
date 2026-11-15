@@ -1,38 +1,30 @@
-# Resultado da correção local — 14/11/2026
+# Verificação da revisão sem serviços obrigatórios
 
-## Executado
+## Causa e alteração
 
-- `npm.cmd run build`: aprovado, servidor TypeScript e frontend Vite.
-- `npm.cmd run typecheck`: aprovado, servidor, frontend e entrada `api/`.
-- `npm.cmd test`: **51 testes de servidor + 9 de frontend aprovados**. Execução final às 22:18, America/Sao_Paulo. A primeira execução restrita falhou ao executar FFprobe; a execução fora do sandbox passou.
-- Conexões e Agenda: HTTP 200/JSON no Express e no handler real `api/index.ts`, usando Redis REST simulado no segundo caso.
-- Erros: 404 JSON, JSON malformado 400, cron sem credencial 401, inicialização sem serviços 503 JSON; frontend trata texto, HTML, JSON inválido e falha de rede.
-- Lote com cinco vídeos de teste, dias consecutivos às 12:00, 20 tarefas independentes e confirmação repetida sem duplicar. Também cinco finalizações Blob simuladas com MP4 real lido por Range, sem FFprobe ou vídeo no disco nesse caminho.
-- Concorrência: script Lua real executado com Fengari/Redis simulado; duas instâncias, CAS, lease ativa preservada e recuperação após expiração sem duplicar envio demo.
-- TikTok: início OAuth com credenciais fictícias, callback em outra instância, cancelamento, state inválido, expirado e reutilizado. Sem autorização real ou post real.
-- `/termos`, `/privacidade` e `.txt`: acesso direto HTTP 200 nos testes. Rewrites inspecionados. Hash do `.txt` no build igual ao de `web/public`; arquivo original sem alterações.
-- `git diff --check`: sem erros de whitespace. Os avisos de LF/CRLF são da configuração Git local.
+O erro vinha da condição global em `api/index.ts`: qualquer ausência de Redis, Blob, chave ou segredo do cron produzia 503 antes de chegar ao Express. Ela foi removida. Contexto preguiçoso e validações por recurso permitem leituras básicas sem serviços e sem disco persistente. A agenda manual usa apenas o navegador. O cron e seu script foram removidos; preparação nativa é uma ação explícita, sem promessa de execução futura do aplicativo.
 
-## Publicação observada e limites
+## Validação executada
 
-As duas rotas publicadas retornaram 500, `text/plain`, `X-Vercel-Error: FUNCTION_INVOCATION_FAILED`; o corpo começava com `A server error has occurred`. O parse sem proteção do React explica o erro apresentado. Sem logs privados não foi possível provar a exceção interna da Function. Não se afirmou que as variáveis, o túnel ou o rewrite eram a causa específica desse 500. Evidências, IDs das requisições e a análise estão no README.
+- Build de servidor e frontend e typecheck: aprovados.
+- Suíte: **56 testes do servidor e 15 do frontend aprovados**, incluindo preparação nativa explícita, recusa nativa com alternativa manual, renderização manual e falha de armazenamento.
+- HTTP na prévia local com runtime Vercel, sem Redis, Blob ou chave: `/api/settings`, `/api/connections` e `/api/tasks` retornaram **200 e application/json**. Nenhuma conexão real foi criada.
+- Handler real da Function: abre telas sem serviços ou segredos, sem chamada externa nem criação de diretório. Chave inválida não bloqueia leitura e só impede OAuth; Redis indisponível produz aviso nas telas, sem apagar estado.
+- Conexão existente preservada e OAuth disponível sem Blob, com dados/credenciais simulados; tokens não aparecem na resposta ao React.
+- YouTube nativo por `/api/tasks/process-native`, com conexão/mídia de teste preexistentes e fetch simulado: status confirmado `scheduled_remote`, sem Blob configurado ou cron. Os testes existentes de Facebook nativo continuam na suíte.
+- Cinco dias manuais consecutivos, incluindo fevereiro bissexto, persistência/restauração e conclusão independente por rede. Renderização da Agenda antes da resposta da API; erro do navegador mantém Tentar de novo.
+- Testes anteriores de conectores, criptografia, concorrência Redis, mídia Blob e URLs legais/TikTok continuam presentes. Não foi feito post real nem usado consentimento OAuth real.
 
-O navegador de QA retornou `The browser access host is unavailable`; não houve teste visual com cliques. Redis, Blob, QStash e OAuth reais continuam pendentes de provisionamento/consentimento e deploy autorizado. O script de setup do QStash não foi executado. Não houve commit, push ou deploy, e o `.env` não foi alterado.
+## Limitação da checagem visual
 
-## Arquivos desta intervenção
+O controle do navegador foi interrompido porque não conseguiu confirmar a URL atual no Windows com confiança suficiente para aplicar sua política. Nenhuma ação na interface foi continuada após esse bloqueio. A verificação das telas foi feita por HTTP e renderização automatizada; cliques completos no navegador não foram comprovados. A prévia local foi encerrada e o arquivo temporário removido.
 
-| Área | Arquivos |
-| --- | --- |
-| Entrada e configuração | `api/index.ts` (novo), `api/proxy.ts` (removido), `api/tsconfig.json`, `vercel.json`, `package.json`, `.gitignore`, `.env.example` |
-| Aplicação/persistência | `server/src/app.ts`, `server/src/config.ts`, `server/src/context.ts`, `server/src/domain/batches.ts`, `server/src/lib/store.ts`, `server/src/lib/redis.ts`, `server/src/lib/links.ts`, `server/src/lib/mediaio.ts`, `server/src/lib/mp4.ts`, `server/src/lib/http.ts`, `server/src/lib/session.ts` |
-| Rotas e fila | `server/src/routes/cloud.ts` (novo), `server/src/routes/batches.ts`, `server/src/routes/other.ts`, `server/src/queue/worker.ts` |
-| Conectores | `server/src/platforms/facebook.ts`, `server/src/platforms/instagram.ts`, `server/src/platforms/tiktok.ts`, `server/src/platforms/youtube.ts`, `server/src/platforms/types.ts` |
-| Frontend | `web/src/lib/api.ts`, `web/src/components/Connections.tsx`, `web/src/components/Agenda.tsx` |
-| Testes | `server/test/remote.test.ts`, `server/test/redis.test.ts` (novo), `server/test/blob.test.ts` (novo), `server/test/function.test.ts` (novo), `web/src/lib/api.test.ts` (novo) |
-| Setup/documentação | `scripts/configure-qstash.mjs` (novo), `README.md`, `VERIFICACAO.md` (novo) |
+## Arquivos principais
 
-O checkout já tinha alterações em `package-lock.json`, `server/package.json`, `web/package.json`, `server/src/domain/model.ts`, `server/src/routes/middleware.ts`, configuração/contexto/store/links, arquivos não rastreados de Redis/mídia e a exclusão staged de `server/src/routes/access.ts`. Foram preservadas e as partes necessárias foram completadas. Nenhum arquivo foi adicionado ao stage por esta intervenção.
+- API/contexto: `api/index.ts`, `server/src/app.ts`, `server/src/config.ts`, `server/src/context.ts`, `server/src/lib/capabilities.ts`, `server/src/lib/store.ts`, `server/src/lib/crypto.ts`.
+- Validações/rotas: `server/src/routes/middleware.ts`, `other.ts`, `batches.ts`, `cloud.ts`; dados/fila em `server/src/domain/batches.ts`, `tasks.ts`, `server/src/queue/worker.ts`, mídia em `server/src/lib/mediaio.ts`; conectores Facebook/Instagram/TikTok e tipos compartilhados.
+- Frontend: `web/src/App.tsx`, `components/ManualAgenda.tsx`, `Agenda.tsx`, `Connections.tsx`, `NewBatch.tsx`, `SettingsPage.tsx`, `lib/manual-agenda.ts`, `lib/api.ts`.
+- Testes: `server/test/function.test.ts`, `remote.test.ts`, `adapters.test.ts`, `web/src/lib/manual-agenda.test.ts`, `web/src/components/manual-pages.test.tsx`.
+- Configuração/documentação: `.env.example`, `README.md`, `VERIFICACAO.md`; removido `scripts/configure-qstash.mjs`. `vercel.json` já não tinha cron e foi mantido.
 
-## O que preencher no painel
-
-O README contém a tabela exata de variáveis, recursos, callbacks e comandos. Root Directory deve ser a raiz do repositório, preset Vite, output `web/dist` e Fluid Compute habilitado. Conecte Upstash Redis + Vercel Blob público; configure QStash Pay as You Go (1.440 entregas/dia, acima do gratuito) ou use Vercel Pro com cron por minuto. Remova `BACKEND_URL` e `BACKEND_PROXY_SECRET`. Preserve a chave de criptografia e desligue a fila local antiga antes de ativar a de produção.
+Nenhum serviço novo foi adicionado. `.env`, conexões reais, mídias e arquivos públicos não foram modificados. O commit local foi solicitado na última frase do pedido; não houve push ou deploy.

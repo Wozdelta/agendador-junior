@@ -7,6 +7,7 @@ import { Connections } from './components/Connections';
 import { SettingsPage } from './components/SettingsPage';
 import { PrivacyPage, PublicFooter, TermsPage } from './legal/LegalPages';
 import { LEGAL } from './legal/config';
+import { ManualAgenda } from './components/ManualAgenda';
 
 type Route = 'novo' | 'agenda' | 'conexoes' | 'config';
 const ROUTES: Array<{ id: Route; label: string }> = [
@@ -77,18 +78,14 @@ function MainApp() {
         </nav>
         {settings && <span className={demo ? 'mode-pill demo' : 'mode-pill'}>{demo ? 'Demonstração' : 'Modo real'}</span>}
       </header>
-      {settings?.remoteAccess && !settings.directLinks && (
-        <div className="alert error content-alert">
-          O backend não tem PUBLIC_BASE_URL configurado: envios de vídeo pela versão hospedada não vão funcionar (limite de 4,5 MB da Vercel).
-        </div>
-      )}
       <main className="content">
         {backendError && (
           <div className="alert error">
             {backendError} <button onClick={loadSettings}>Tentar de novo</button>
           </div>
         )}
-        {settings && route === 'novo' && <NewBatch settings={settings} key={settings.mode} />}
+        {settings && route === 'novo' && (settings.serverPersistence && settings.mediaPersistence ? <NewBatch settings={settings} key={settings.mode} /> : <ManualAgenda />)}
+        {!settings && (route === 'novo' || route === 'agenda') && <ManualAgenda />}
         {settings && route === 'agenda' && <Agenda settings={settings} key={settings.mode} />}
         {settings && route === 'conexoes' && <Connections settings={settings} key={settings.mode} />}
         {settings && route === 'config' && <SettingsPage settings={settings} onChange={setSettings} />}

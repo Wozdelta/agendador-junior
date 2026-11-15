@@ -4,7 +4,7 @@ import express from 'express';
 import type { AppContext } from './context.js';
 import { PROJECT_ROOT } from './config.js';
 import { batchRoutes } from './routes/batches.js';
-import { errorHandler, externalGuard, noStore, originGuard } from './routes/middleware.js';
+import { errorHandler, externalGuard, noStore, originGuard, prepareRequest } from './routes/middleware.js';
 import { cloudRoutes } from './routes/cloud.js';
 import { connectionRoutes, mediaRoutes, publicRoutes, settingsRoutes, taskRoutes, webDist } from './routes/other.js';
 
@@ -19,6 +19,7 @@ export function createApp(ctx: AppContext): express.Express {
   api.use(noStore);
   api.use(originGuard(ctx));
   api.use(express.json({ limit: '1mb' }));
+  api.use(prepareRequest(ctx));
   api.use(cloudRoutes(ctx));
   api.get('/health', (_req, res) => {
     res.json({ ok: true, mode: ctx.settings.get().mode });

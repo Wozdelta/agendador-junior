@@ -41,6 +41,7 @@ export const TASK_STATE_LABEL: Record<TaskState, string> = {
 export type ManualReason =
   | 'tiktok_manual' // TikTok sem API: publicar manualmente
   | 'tiktok_inbox' // Enviado ao TikTok (caixa de entrada): finalizar no app
+  | 'platform_manual' // plataforma sem execução futura nesta arquitetura
   | 'review_unknown'; // resultado remoto desconhecido: revisar na plataforma
 
 export type CoverState = 'none' | 'pending' | 'applied' | 'frame' | 'manual' | 'failed';
@@ -171,6 +172,7 @@ export type TaskAction =
   | 'resolve_review';
 
 export interface ConnectionDTO {
+  canConnect?: boolean;
   platform: Platform;
   configured: boolean; // credenciais do app presentes no .env
   connected: boolean;
@@ -185,6 +187,10 @@ export interface ConnectionDTO {
 }
 
 export interface SettingsDTO {
+  serverPersistence?: boolean;
+  mediaPersistence?: boolean;
+  oauthAvailable?: boolean;
+  backgroundWorker?: boolean;
   mode: AppMode;
   timezone: string;
   publishTime: string;

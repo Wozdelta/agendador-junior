@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ConnectionDTO, Platform, SettingsDTO } from '../../../server/src/shared/types';
 import { PLATFORM_LABEL } from '../../../server/src/shared/types';
 import { api } from '../lib/api';
+import { PLATFORM_HOME } from './ManualAgenda';
 
 const CAP_LABEL: Record<string, string> = {
   native_schedule: 'Agendamento nativo',
@@ -101,7 +102,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
             {!demo && (
               <div className="row">
                 {c.platform !== 'instagram' && (
-                  <button className="primary small" disabled={!c.configured} onClick={() => connect(c.platform)} title={c.configured ? '' : 'Configure as credenciais do app no .env'}>
+                  <button className="primary small" disabled={!(c.canConnect ?? c.configured)} onClick={() => connect(c.platform)} title="Consulte os requisitos desta conexão acima">
                     {c.connected ? 'Reconectar' : 'Conectar'}
                   </button>
                 )}
@@ -120,6 +121,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                 )}
               </div>
             )}
+            <a className="button small" href={PLATFORM_HOME[c.platform]} target="_blank" rel="noreferrer">Publicar manualmente</a>
           </section>
         ))}
       </div>

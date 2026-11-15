@@ -3,6 +3,38 @@ import type { AppContext } from '../context.js';
 import { AppError } from '../lib/errors.js';
 import { log } from '../lib/log.js';
 import { linksFor, type Links } from '../lib/links.js';
+import { hasPersistence, requireOAuth, requirePersistence, requireMediaStorage } from '../lib/capabilities.js';
+
+/** Carrega só o estado usado pela rota, sem bloquear telas por dependências alheias. */
+export function prepareRequest(ctx: AppContext): RequestHandler {
+  return ah(async (req, res, next) => {
+    const p = req.path;
+    if (p === '/settings' || p === '/health') return next();
+    const oauth = p.startsWith('/oauth/') || /^\/connections\/[^/]+\/start$/.test(p);
+    if (oauth) requireOAuth(ctx);
+    if (p.startsWith('/blob/')) requireMediaStorage(ctx);
+    if (ctx.config.runtime === 'vercel' && req.method !== 'GET' && /^\/(batches|tasks|connections|settings|demo|blob)(\/|$)/.test(p)) requirePersistence(ctx);
+    if (!ctx.lazy) return next();
+    if (!hasPersistence(ctx)) return next();
+    try {
+      if (ctx.config.runtime !== 'vercel') await ctx.settings.refresh();
+      const mc = ctx.current();
+      if (p.startsWith('/connections') || p.startsWith('/oauth/')) {
+        await mc.connections.refresh();
+        if (p.startsWith('/oauth/')) await ctx.oauthUsed.refresh();
+      } else if (p === '/tasks' && req.method === 'GET') {
+        await Promise.all([mc.batches.refresh(), mc.tasks.refresh(), mc.media.refresh()]);
+      } else if (p.startsWith('/tasks') || p.startsWith('/batches') || p.startsWith('/blob') || p.startsWith('/media')) {
+        await Promise.all([mc.batches.refresh(), mc.tasks.refresh(), mc.media.refresh(), mc.idem.refresh(), mc.connections.refresh(), mc.demo.refresh()]);
+      }
+    } catch {
+      const message = 'O armazenamento do servidor está indisponível. Seus dados não foram apagados. Use a agenda manual ou tente de novo.';
+      if (req.method === 'GET' && (p === '/connections' || p === '/tasks')) res.locals.storageWarning = message;
+      else throw new AppError(503, message, undefined, 'storage_unavailable');
+    }
+    next();
+  });
+}
 
 /** Links de mídia e upload (Blob na Vercel; rotas /api localmente). */
 export function linksOf(ctx: AppContext, _res?: Response): Links {
@@ -29,7 +61,7 @@ export function allowedOrigins(ctx: AppContext): string[] {
 /**
  * Quem pode chegar à API:
  * - na Vercel: tudo em /api (mesmo domínio da interface; sem login, a pedido do dono);
- *   o cron exige CRON_SECRET e escrita de outras origens é recusada (originGuard);
+ *   escrita de outras origens é recusada (originGuard);
  * - no Node local: localhost; de fora, só links de mídia assinados (/public/media)
  *   e retornos OAuth (por exemplo, via túnel HTTPS).
  */
@@ -42,7 +74,6 @@ export function externalGuard(ctx: AppContext): RequestHandler {
     const forwarded = !!req.headers['x-forwarded-for'] || !!req.headers['forwarded'];
     if (isLoopback(req.socket.remoteAddress) && !viaPublicHost && !forwarded) return next();
     if (req.method === 'GET' && (req.path.startsWith('/public/media/') || /^\/api\/oauth\/[a-z]+\/callback$/.test(req.path))) return next();
-    if (req.path === '/api/cron/tick') return next(); // protegido por CRON_SECRET
     sendError(res, 403, 'Acesso externo não permitido a esta rota.', 'forbidden');
   };
 }

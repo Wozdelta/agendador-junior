@@ -62,7 +62,7 @@ export class InstagramAdapter implements PlatformAdapter {
       capabilities: caps,
       notes: [
         page && !page.instagram ? `A Página "${page.name}" não tem conta profissional do Instagram vinculada.` : '',
-        'O Instagram não tem agendamento nativo pela API: o app cria o container antes e publica às 12:00 (Node precisa estar ligado).',
+        cfg.runtime === 'vercel' ? 'Instagram disponível para publicação manual; esta versão não executa publicações futuras.' : 'O Instagram não tem agendamento nativo pela API: a fila local publica no horário enquanto o servidor estiver ligado.',
         cfg.publicBaseUrl ? '' : 'Sem PUBLIC_BASE_URL: a capa usa um quadro (thumb_offset) e a imagem fica para uso manual.',
       ].filter(Boolean),
     };

@@ -46,10 +46,11 @@ export function SettingsPage({ settings, onChange }: { settings: SettingsDTO; on
           Os dados de demonstração ficam em <code>data/demo/</code> e os reais em <code>data/real/</code>. Conectores simulados nunca acessam a rede, e os reais nunca processam
           tarefas de demonstração.
         </p>
-        <button className={demo ? 'primary' : ''} onClick={toggle}>
+        <button className={demo ? 'primary' : ''} onClick={toggle} disabled={!settings.backgroundWorker}>
           {demo ? 'Desativar demonstração e voltar ao modo real' : 'Ativar modo demonstração'}
         </button>
       </section>
+      {!settings.backgroundWorker && <div className="alert">A agenda manual funciona sem serviços externos e salva registros neste navegador. OAuth só salva tokens com persistência no servidor e criptografia. Vídeos exigem armazenamento próprio. Não há cron ou fila de publicação futura nesta versão.</div>}
 
       {demo && (
         <section className="panel">

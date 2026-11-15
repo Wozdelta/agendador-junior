@@ -29,6 +29,10 @@ export function actionsFor(t: Task): TaskAction[] {
 }
 
 export function toTaskDTO(ctx: AppContext, mc: ModeContext, t: Task, links: Links): TaskDTO {
+  const originalActions = actionsFor(t);
+  const fallback = manualFallback(ctx, t);
+  if (fallback) t = { ...t, state: 'manual_action', manualReason: 'platform_manual', nextRunAt: undefined,
+    delayNote: 'Não há execução futura nesta arquitetura. Prepare/retome redes com agendamento nativo pelo botão ou confira a plataforma antes de publicar manualmente.' };
   const tz = ctx.config.timezone;
   return {
     id: t.id,
@@ -62,7 +66,7 @@ export function toTaskDTO(ctx: AppContext, mc: ModeContext, t: Task, links: Link
     title: t.title,
     description: t.description,
     history: t.history,
-    actions: actionsFor(t),
+    actions: fallback ? [...originalActions, 'manual_complete'] : actionsFor(t),
   };
 }
 
@@ -74,6 +78,10 @@ function load(mc: ModeContext, id: string): Task {
 
 function requireAction(t: Task, a: TaskAction) {
   if (!actionsFor(t).includes(a)) throw new AppError(409, `Ação indisponível no estado atual da tarefa.`);
+}
+
+function manualFallback(ctx: AppContext, t: Task): boolean {
+  return ctx.config.runtime === 'vercel' && !t.nativeSchedule && ['queued', 'processing', 'late', 'failed'].includes(t.state);
 }
 
 /** Executa sob a trava da tarefa (a mesma usada pela fila), evitando corrida com um envio. */
@@ -253,7 +261,8 @@ export function editTask(ctx: AppContext, mc: ModeContext, id: string, body: { t
 
 export function manualComplete(ctx: AppContext, mc: ModeContext, id: string, url: unknown): Promise<Task> {
   return withTask(ctx, mc, id, async (t) => {
-    requireAction(t, 'manual_complete');
+    if (!manualFallback(ctx, t)) requireAction(t, 'manual_complete');
+    if (t.lock && new Date(t.lock.until ?? t.lock.at) > ctx.clock.now()) throw new AppError(409, 'Há uma execução em andamento. Confira o resultado antes de registrar a conclusão manual.');
     const link = typeof url === 'string' && url.trim() ? url.trim() : undefined;
     if (link && !/^https:\/\/[^\s]+$/i.test(link)) throw new AppError(400, 'Cole um link https:// válido (ou deixe em branco).', { field: 'url' });
     const now = ctx.clock.now().toISOString();

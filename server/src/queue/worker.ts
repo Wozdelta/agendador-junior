@@ -60,10 +60,15 @@ export class Worker {
   }
 
   private isDue(t: Task, now: Date): boolean {
+    if (!this.eligible(t)) return false;
     if (!RUNNABLE.has(t.state)) return false;
     if (t.state === 'manual_action' && t.manualReason !== 'tiktok_inbox') return false;
     if (!t.nextRunAt) return false;
     return new Date(t.nextRunAt) <= now;
+  }
+
+  private eligible(t: Task): boolean {
+    return this.ctx.config.runtime !== 'vercel' || (t.mode === 'real' && ['youtube', 'facebook'].includes(t.platform) && t.remote.strategy === 'native' && !t.remote.queueFallback);
   }
 
   /** Um ciclo: executa as tarefas vencidas respeitando a concorrência. Retorna quando todas terminam. */
@@ -115,6 +120,7 @@ export class Worker {
     const tol = this.ctx.config.lateToleranceMinutes;
     const late = mc.tasks.find(
       (t) =>
+        this.eligible(t) &&
         (t.state === 'queued' || t.state === 'processing') &&
         (!t.lock || new Date(t.lock.until ?? t.lock.at) <= now) &&
         !this.running.has(t.id) &&
@@ -136,7 +142,7 @@ export class Worker {
   async runTask(mc: ModeContext, id: string): Promise<void> {
     await this.ctx.taskLocks.run(id, async () => {
       const t0 = mc.tasks.get(id);
-      if (!t0 || !RUNNABLE.has(t0.state)) return;
+      if (!t0 || !this.eligible(t0) || !RUNNABLE.has(t0.state)) return;
       const nowIso = this.ctx.clock.now().toISOString();
       // Trava persistida: se o processo cair aqui, a próxima inicialização reconcilia.
       const locked = await mc.tasks.mutate((tasks) => {

@@ -91,6 +91,29 @@ describe('YouTube (videos.insert retomável + publishAt)', () => {
     f.on('POST', /thumbnails\/set\?videoId=YT_VIDEO_1/, () => json({ items: [{}] }));
   }
 
+  it('prepara agendamento nativo por ação explícita na Vercel sem configurar Blob ou cron', async () => {
+    const f = fakeFetch();
+    youtubeApi(f, { processing: 'succeeded', privacy: 'private' });
+    const env = await realEnv(f);
+    const [t0] = await confirmOnly(env, ['youtube'], 5);
+    // Dados persistidos e mídia pública preexistentes; nenhuma integração nova.
+    await env.ctx.modes.real.media.update(t0.mediaId, m => { m.blobUrl = 'https://test.public.blob.vercel-storage.com/video.mp4'; });
+    f.on('GET', /test\.public\.blob\.vercel-storage\.com/, (_url, init) => {
+      const match = /bytes=(\d+)-(\d+)/.exec(init.headers.Range ?? '');
+      const bytes = fs.readFileSync(fx.vertical);
+      return new Response(match ? bytes.subarray(Number(match[1]), Number(match[2]) + 1) : bytes, { status: match ? 206 : 200 });
+    });
+    env.ctx.config.runtime = 'vercel';
+    env.ctx.config.storage = 'redis'; // storage fixture já carregado no contexto
+    env.ctx.config.mediaStorage = 'disk';
+    env.ctx.config.blobToken = '';
+    await env.api.post('/api/tasks/process-native').send({}).expect(200);
+    expect(task(env).state).toBe('scheduled_remote');
+    expect(task(env).remoteId).toBe('YT_VIDEO_1');
+    expect(task(env).nativeSchedule).toBe(true);
+    await env.api.post('/api/cron/tick').expect(404);
+  });
+
   it('envia, confirma o agendamento pelo ID, aplica a capa após o processamento e confirma a publicação', async () => {
     const f = fakeFetch();
     const st = { processing: 'processing', privacy: 'private' } as any;
@@ -244,6 +267,24 @@ describe('Facebook Reels (video_reels start/upload/finish)', () => {
     const c = await env.api.post(`/api/tasks/${t0.id}/cancel`).set('Idempotency-Key', idemKey()).expect(200);
     expect(c.body.state).toBe('cancelled');
     expect(f.calls.some((x) => x.method === 'DELETE')).toBe(true);
+  });
+
+  it('recusa de agendamento nativo na Vercel oferece ação manual sem ativar fila futura', async () => {
+    const f = fakeFetch();
+    fbApi(f, { publish: 'draft', uploaded: true });
+    const env = await realEnv(f);
+    const [t0] = await confirmOnly(env, ['facebook'], 5);
+    await env.ctx.modes.real.tasks.update(t0.id, t => { t.remoteId = 'FBV1'; t.phase = 'uploaded'; t.videoUploaded = true; });
+    f.on('POST', /PAGE1\/video_reels$/, () => json({ error: { code: 100, message: 'Scheduling not allowed' } }, 400));
+    env.ctx.config.runtime = 'vercel';
+    env.ctx.config.storage = 'redis';
+    env.ctx.config.meta.allowDirectPublishFallback = true;
+    await env.api.post('/api/tasks/process-native').send({}).expect(200);
+    expect(task(env).state).toBe('manual_action');
+    expect(task(env).nextRunAt).toBeUndefined();
+    expect(task(env).remote.queueFallback).not.toBe(true);
+    await env.api.post(`/api/tasks/${t0.id}/manual-complete`).send({}).expect(200);
+    expect(task(env).publishedManually).toBe(true);
   });
 
   it('limite de Reels (erro 613) vira nova tentativa espaçada', async () => {

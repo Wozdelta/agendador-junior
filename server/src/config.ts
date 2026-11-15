@@ -46,14 +46,12 @@ export interface Config {
   appUrl: string;
   /** local = Node no seu computador; vercel = Vercel Functions (detectado por VERCEL=1). */
   runtime: 'local' | 'vercel';
-  /** file = JSON em DATA_DIR; redis = Upstash Redis (obrigatório na Vercel). */
+  /** Redis é opcional; sem ele a Vercel não persiste estado no servidor. */
   storage: 'file' | 'redis';
   redis: { url: string; token: string; prefix: string };
-  /** blob = Vercel Blob para vídeos e capas (obrigatório na Vercel). */
+  /** Blob é opcional, usado somente ao guardar mídia. */
   mediaStorage: 'disk' | 'blob';
   blobToken: string;
-  /** Protege /api/cron/tick (o Vercel Cron envia Authorization: Bearer CRON_SECRET). */
-  cronSecret: string;
   /** Tempo que uma execução da fila usa antes de parar de pegar tarefas novas (ms). */
   tickBudgetMs: number;
   /** Validade da trava de uma tarefa em execução (ms). */
@@ -112,7 +110,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     redis: { url: redisUrl, token: redisToken, prefix: str('REDIS_PREFIX', 'agj') },
     mediaStorage: str('BLOB_READ_WRITE_TOKEN') ? 'blob' : 'disk',
     blobToken: str('BLOB_READ_WRITE_TOKEN'),
-    cronSecret: str('CRON_SECRET'),
     tickBudgetMs: num('TICK_BUDGET_SECONDS', vercel ? 240 : 3600) * 1000,
     taskLeaseMs: num('TASK_LEASE_MINUTES', vercel ? 6 : 30) * 60_000,
     google: {

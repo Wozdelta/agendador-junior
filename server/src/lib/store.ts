@@ -9,6 +9,15 @@ import { readJson, writeJsonAtomic } from './atomic.js';
 import { COMMIT_SCRIPT, type RedisRest } from './redis.js';
 
 type Rec = { id: string };
+/** Estado vazio por requisição, sem fingir persistência em /tmp da Vercel. */
+export class MemoryBackend<T extends Rec> implements CollectionBackend<T> {
+  private items: T[] = [];
+  async load() { return { items: structuredClone(this.items), versions: new Map<string, number>(), rev: 'memory' }; }
+  async commit(_prev: T[], next: T[]) {
+    this.items = structuredClone(next);
+    return { ok: true as const, rev: 'memory', versions: new Map<string, number>() };
+  }
+}
 interface Loaded<T> {
   items: T[];
   versions: Map<string, number>;
