@@ -7,7 +7,7 @@ import * as configModule from '../src/config.js';
 import { database, OWNER } from './supabase-fixture.js';
 const email = 'admin@example.com';
 let fixture: Awaited<ReturnType<typeof database>>;
-let sent: any[] = [];
+let attempts: any[] = [];
 let authenticatedEmail = email;
 let tokenValid = true;
 beforeAll(async () => {
@@ -36,10 +36,6 @@ function app() {
     const url = new URL(String(input)),
       body = init?.body ? JSON.parse(String(init.body)) : null;
     const method = init?.method ?? 'GET';
-    if (url.pathname === '/auth/v1/otp') {
-      sent.push(body);
-      return Response.json({});
-    }
     const user = {
       id: OWNER,
       email: authenticatedEmail,
@@ -49,16 +45,12 @@ function app() {
       app_metadata: {},
       user_metadata: {},
     };
-    if (url.pathname === '/auth/v1/verify')
-      return body.token === '123456'
-        ? Response.json({
-            access_token: 'test-access',
-            refresh_token: 'test-refresh',
-            expires_in: 3600,
-            token_type: 'bearer',
-            user,
-          })
-        : Response.json({ msg: 'Invalid code' }, { status: 401 });
+    if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password') {
+      attempts.push(body);
+      return body.password === '  senha-de-teste  '
+        ? Response.json({access_token:'test-access',refresh_token:'test-refresh',expires_in:3600,token_type:'bearer',user})
+        : Response.json({msg:'Invalid login credentials'},{status:400});
+    }
     if (url.pathname === '/auth/v1/user')
       return tokenValid ||
         new Headers(init?.headers).get('authorization') === 'Bearer refreshed-access'
@@ -118,28 +110,21 @@ function app() {
   app.use(handler);
   return app;
 }
-it('OTP autorizado, recusa outro e-mail, lote de cinco no banco, importação idempotente, status e logout revogado', async () => {
-  sent = [];
+it('Login com senha, recusa outro e-mail, lote de cinco no banco, importação idempotente, status e logout revogado', async () => {
+  attempts = [];
   authenticatedEmail = email;
   tokenValid = true;
   const target = app();
   const agent = request.agent(target);
   await agent.get('/api?__path=manual').expect(401);
-  await agent
-    .post('/api?__path=auth/request-code')
-    .send({ email: 'intruso@example.com' })
-    .expect(403);
-  expect(sent).toHaveLength(0);
-  await agent
-    .post('/api?__path=auth/request-code')
-    .send({ email: '  ADMIN@EXAMPLE.COM ' })
-    .expect(200);
-  expect(sent[0]).toMatchObject({ email, create_user: false });
-  await agent.post('/api?__path=auth/verify-code').send({ email, code: '000000' }).expect(401);
-  const login = await agent
-    .post('/api?__path=auth/verify-code')
-    .send({ email, code: '123456' })
-    .expect(200);
+  await agent.post('/api?__path=auth/login').send({email:'intruso@example.com',password:'  senha-de-teste  '}).expect(403);
+  expect(attempts).toHaveLength(0);
+  await agent.post('/api?__path=auth/login').send({email,password:''}).expect(400);
+  await agent.post('/api?__path=auth/login').send({email,password:'errada'}).expect(401);
+  expect(vi.mocked(fetch).mock.calls.some(([u])=>String(u).includes('/rest/'))).toBe(false);
+  const login=await agent.post('/api?__path=auth/login').send({email:'  ADMIN@EXAMPLE.COM ',password:'  senha-de-teste  '}).expect(200);
+  expect(attempts.at(-1)).toMatchObject({email,password:'  senha-de-teste  '});
+  expect(vi.mocked(fetch).mock.calls.some(([u])=>String(u).includes('/auth/v1/otp'))).toBe(false);
   const cookie = login.headers['set-cookie'] as unknown as string[];
   expect(cookie.join(';')).toContain('HttpOnly');
   expect(cookie.join(';')).not.toContain('test-secret');
@@ -225,8 +210,8 @@ it('a identidade retornada pelo provedor também precisa ser administradora', as
   authenticatedEmail = 'intruso@example.com';
   const target = app();
   await request(target)
-    .post('/api?__path=auth/verify-code')
-    .send({ email, code: '123456' })
+    .post('/api?__path=auth/login')
+    .send({ email, password: '  senha-de-teste  ' })
     .expect(403);
   expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes('/rest/'))).toBe(false);
   authenticatedEmail = email;

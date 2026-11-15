@@ -71,8 +71,8 @@ export function TermsPage() {
 
       <h2>2. Acesso</h2>
       <p>
-        O acesso ao painel exige um código temporário enviado pelo Supabase Auth ao e-mail
-        administrador configurado no servidor. Não há cadastro público. Termos, Privacidade e
+        O acesso ao painel exige e-mail e senha validados pelo Supabase Auth para a conta
+        administradora configurada no servidor. Não há cadastro público. Termos, Privacidade e
         a verificação da plataforma continuam públicos.
       </p>
 
@@ -202,7 +202,7 @@ export function PrivacyPage() {
         (Google/YouTube, Meta/Facebook/Instagram ou TikTok) no momento do envio. Para o Instagram, a
         Meta baixa o arquivo por um link temporário e assinado, válido só para aquele arquivo. A
         interface e a API são hospedadas na Vercel. O Supabase processa autenticação e banco;
-        o provedor SMTP entrega os códigos de acesso. Na agenda manual guardamos apenas nomes
+        o login usa e-mail e senha, sem envio de código. Na agenda manual guardamos apenas nomes
         e textos. No fluxo de upload real, arquivos vão diretamente para um bucket privado
         no Supabase Storage e são acessados por links temporários.
       </p>

@@ -8,8 +8,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [email, setEmail] = useState(''),
-    [code, setCode] = useState(''),
-    [sent, setSent] = useState(false),
+    [password, setPassword] = useState(''),
     [error, setError] = useState('');
   const load = async () => {
     setLoading(true);
@@ -51,8 +50,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
               try {
                 await api.logout();
                 setUser(null);
-                setCode('');
-                setSent(false);
+                setPassword('');
                 setError('');
               } catch (e: any) {
                 setError(e.message);
@@ -74,7 +72,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <BrandMark />
         <h1>Entre no Agendador Junior</h1>
         <p className="muted">
-          Use o e-mail administrador. Você receberá um código temporário para entrar com segurança.
+          Entre com o e-mail e a senha da conta administradora.
         </p>
         <form
           onSubmit={async (e) => {
@@ -82,13 +80,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
             setBusy(true);
             setError('');
             try {
-              if (sent) {
-                setUser((await api.verifyCode(email, code)).user);
-                setCode('');
-              } else {
-                await api.requestCode(email);
-                setSent(true);
-              }
+              setUser((await api.login(email, password)).user);
+              setPassword('');
             } catch (e: any) {
               setError(e.message);
             } finally {
@@ -103,52 +96,29 @@ export function AuthGate({ children }: { children: ReactNode }) {
               autoComplete="email"
               required
               value={email}
-              disabled={sent || busy}
+              disabled={busy}
               onChange={(e) => setEmail(e.target.value)}
             />
           </label>
-          {sent && (
-            <>
-              <p role="status">Confira sua caixa de entrada e a pasta de spam.</p>
-              <label>
-                Código temporário
-                <input
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  pattern="[0-9]{6,10}"
-                  required
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  autoFocus
-                />
-              </label>
-            </>
-          )}
+          <label>
+            Senha
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              disabled={busy}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
           {error && (
             <p role="alert" className="alert error">
               {error}
             </p>
           )}
           <button className="primary" disabled={busy}>
-            {busy ? 'Aguarde…' : sent ? 'Entrar' : 'Enviar código'}
+            {busy ? 'Entrando…' : 'Entrar'}
           </button>
-          {sent && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setSent(false);
-                setCode('');
-              }}
-            >
-              Alterar e-mail / solicitar outro código
-            </button>
-          )}
-          {!sent && error && (
-            <button type="button" onClick={() => void load()}>
-              Tentar de novo
-            </button>
-          )}
         </form>
         <p>
           <a href="/termos">Termos de Uso</a> · <a href="/privacidade">Política de Privacidade</a>

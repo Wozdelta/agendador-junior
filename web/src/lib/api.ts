@@ -64,8 +64,7 @@ export interface DraftAgendaRow {
 export const api = {
   importLegacy: (backup:unknown) => call<{ok:boolean;imported:Record<string,number>}>('POST','/api/migration/legacy',backup),
   session: () => call<{user:{id:string;email:string}|null}>('GET','/api/auth/session'),
-  requestCode: (email:string) => call('POST','/api/auth/request-code',{email}),
-  verifyCode: (email:string,code:string) => call<{user:{id:string;email:string}}>('POST','/api/auth/verify-code',{email,code}),
+  login: (email:string,password:string) => call<{user:{id:string;email:string}}>('POST','/api/auth/login',{email,password}),
   logout: () => call('POST','/api/auth/logout',{}),
   manual: () => call<{rows:ManualEntry[]}>('GET','/api/manual'),
   saveManual: (ops:unknown[]) => call<{rows:ManualEntry[]}>('POST','/api/manual',{ops}),

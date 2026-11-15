@@ -100,40 +100,23 @@ export function authRoutes(ctx: AppContext) {
     }),
   );
   r.post(
-    '/auth/request-code',
+    '/auth/login',
     ah(async (req, res) => {
       const email = normalizeEmail(req.body?.email);
       allowed(ctx, email);
-      const { error } = await supabase(ctx.config, false, ctx.fetch).auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: false },
-      });
-      if (error)
-        throw new AppError(
-          error.status === 429 ? 429 : 400,
-          'Não foi possível enviar o código. Confira a conta cadastrada e a entrega de e-mail no Supabase; aguarde antes de tentar novamente.',
-          undefined,
-          'otp_send_failed',
-        );
-      res.json({ ok: true });
-    }),
-  );
-  r.post(
-    '/auth/verify-code',
-    ah(async (req, res) => {
-      const email = normalizeEmail(req.body?.email);
-      allowed(ctx, email);
-      const token = String(req.body?.code ?? '').trim();
-      if (!/^\d{6,10}$/.test(token))
-        throw new AppError(400, 'Informe o código recebido por e-mail.');
+      const password = req.body?.password;
+      if (typeof password !== 'string' || !password.length || password.length > 4096)
+        throw new AppError(400, 'Informe sua senha.');
       const client = supabase(ctx.config, false, ctx.fetch);
-      const { data, error } = await client.auth.verifyOtp({ email, token, type: 'email' });
+      const { data, error } = await client.auth.signInWithPassword({ email, password });
       if (error || !data.session)
         throw new AppError(
-          401,
-          'Código inválido ou expirado. Solicite outro código.',
+          error?.status === 429 ? 429 : 401,
+          error?.status === 429
+            ? 'Muitas tentativas. Aguarde um pouco e tente novamente.'
+            : 'E-mail ou senha inválidos. Confira os dados e tente novamente.',
           undefined,
-          'otp_invalid',
+          'login_failed',
         );
       const { data: verified, error: verificationError } = await client.auth.getUser(
         data.session.access_token,

@@ -356,10 +356,9 @@ describe('Novo lote e agenda — eventos DOM', () => {
 });
 import {AuthGate} from './AuthGate';
 describe('login e agenda no Supabase',()=>{
- it('só mostra o painel após OTP, salva cinco vídeos no servidor e encerra a sessão',async()=>{
+ it('só mostra o painel após login, salva cinco vídeos no servidor e encerra a sessão',async()=>{
   vi.mocked(api.session).mockResolvedValue({user:null});
-  const requestCode=vi.spyOn(api,'requestCode').mockRejectedValueOnce(new Error('Este e-mail não tem acesso.')).mockResolvedValue({ok:true});
-  const verify=vi.spyOn(api,'verifyCode').mockResolvedValue({user:{id:'admin',email:'admin@example.com'}});
+  const login=vi.spyOn(api,'login').mockRejectedValueOnce(new Error('Este e-mail n\u00e3o tem acesso.')).mockRejectedValueOnce(new Error('E-mail ou senha inv\u00e1lidos.')).mockResolvedValue({user:{id:'admin',email:'admin@example.com'}});
   const logout=vi.spyOn(api,'logout').mockResolvedValue({ok:true});
   let saved:any[]=[];
   const save=vi.spyOn(api,'saveManual').mockImplementation(async ops=>{
@@ -369,12 +368,14 @@ describe('login e agenda no Supabase',()=>{
   vi.mocked(api.manual).mockImplementation(async()=>({rows:saved}));
   await render(<AuthGate><ManualAgenda view="all"/></AuthGate>);
   expect(host.querySelector('.batch-form')).toBeNull();
-  await input('input[type=email]','intruso@example.com');await submit();
+  await input('input[type=email]','intruso@example.com');await input('input[type=password]','senha-de-teste');await submit();
   expect(host.querySelector('[role=alert]')?.textContent).toContain('não tem acesso');
   await input('input[type=email]','admin@example.com');await submit();
-  expect(requestCode).toHaveBeenLastCalledWith('admin@example.com');
-  await input('input[autocomplete=one-time-code]','123456');await submit();
-  expect(verify).toHaveBeenCalledWith('admin@example.com','123456');
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('senha');
+  expect(host.querySelector<HTMLInputElement>('input[type=password]')?.value).toBe('senha-de-teste');
+  await input('input[type=password]','senha-correta');await submit();
+  expect(login).toHaveBeenLastCalledWith('admin@example.com','senha-correta');
+  expect(host.querySelector('input[autocomplete=one-time-code]')).toBeNull();
   await input('input[placeholder="DD/MM/AAAA"]','20/12/2026');
   await chooseFiles(['1.mp4','2.mp4','3.mp4','4.mp4','5.mp4']);await submit();
   expect(save).toHaveBeenCalled();expect(saved).toHaveLength(5);

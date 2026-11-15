@@ -1,6 +1,6 @@
 # Agendador Junior
 
-React/Vite na Vercel, API Express em Vercel Functions, Supabase Auth e PostgreSQL. O painel agora exige login por código temporário para um único administrador. Termos, Privacidade e a verificação TikTok continuam públicos. Não há Redis, Vercel Blob, túnel ou processo residente obrigatório.
+React/Vite na Vercel, API Express em Vercel Functions, Supabase Auth e PostgreSQL. O painel exige e-mail e senha de um único administrador. Termos, Privacidade e a verificação TikTok continuam públicos. Não há Redis, Vercel Blob, túnel ou processo residente obrigatório.
 
 ## Configuração
 
@@ -22,7 +22,7 @@ npm test
 
 ## Dados e autorização
 
-`Login_ADM` é lida somente no servidor, normalizada com trim/lowercase e comparada com a identidade confirmada por `Supabase Auth.getUser`. Solicitação de OTP usa `shouldCreateUser: false`. Toda API privada, incluindo callbacks OAuth, valida sessão e administrador antes de usar a chave secreta. Cookies essenciais são HttpOnly/SameSite=Lax e Secure na Vercel. Uma sessão revogada no banco deixa de acessar a API imediatamente, mesmo com uma cópia do cookie anterior. A sessão do aplicativo dura até sete dias; o token Supabase é renovado no servidor quando necessário.
+`Login_ADM` é lida somente no servidor, normalizada com trim/lowercase e comparada com a identidade confirmada por `Supabase Auth.getUser`. O login usa `signInWithPassword`, sem criar contas nem enviar códigos. A senha é validada pelo Supabase Auth e não é salva no banco do agendador, nas variáveis da Vercel ou no navegador pelo app. Toda API privada, incluindo callbacks OAuth, valida sessão e administrador antes de usar a chave secreta. Cookies essenciais são HttpOnly/SameSite=Lax e Secure na Vercel. Uma sessão revogada no banco deixa de acessar a API imediatamente, mesmo com uma cópia do cookie anterior. A sessão do aplicativo dura até sete dias; o token Supabase é renovado no servidor quando necessário.
 
 RLS e permissões negam acesso direto de `anon`/`authenticated` às tabelas e RPCs. Só o backend autorizado usa a chave secreta. Conexões OAuth continuam AES-256-GCM; preserve `TOKEN_ENCRYPTION_KEY`. Nenhum segredo é compilado no React. Dados de proprietários diferentes usam chaves separadas; alterar Login_ADM não transfere os dados de uma conta para outra.
 
