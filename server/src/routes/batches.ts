@@ -87,19 +87,17 @@ export function batchRoutes(ctx: AppContext): Router {
     const files = req.body?.files;
     if (!Array.isArray(files) || files.length === 0 || files.length > 200) throw new AppError(400, 'Informe de 1 a 200 arquivos.');
     const mc = mcOf();
-    const created: string[] = [];
+    const reserved = files.map(f => newItem(f?.name, f?.size));
+    const created = reserved.map(it => it.id);
     const b = await mutateDraft(ctx, mc, String(req.params.id), (b) => {
       assertFuture(ctx, b, b.items.length + files.length);
-      for (const f of files) {
-        const it = newItem(f?.name, f?.size);
-        created.push(it.id);
-        b.items.push(it);
-      }
+      b.items.push(...structuredClone(reserved));
     });
     res.status(201).json({ batch: toBatchDTO(mc, b, linksOf(ctx, res)), itemIds: created });
   }));
 
     r.put('/batches/:id/items/:itemId/video', ah(async (req, res) => {
+    if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveVideo(ctx, mc, String(req.params.id), String(req.params.itemId), req);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));
@@ -153,6 +151,7 @@ export function batchRoutes(ctx: AppContext): Router {
   }));
 
     r.put('/batches/:id/items/:itemId/cover', ah(async (req, res) => {
+    if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveCover(ctx, mc, String(req.params.id), String(req.params.itemId), req);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));

@@ -42,6 +42,7 @@ export function Agenda({ settings }: { settings: SettingsDTO }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const r = await api.tasks();
       setTasks(r.tasks);
@@ -93,7 +94,7 @@ export function Agenda({ settings }: { settings: SettingsDTO }) {
       </div>
       {error && (
         <div className="alert error" role="alert">
-          {error} <button className="link" onClick={() => setError(null)}>fechar</button>
+          {error} <button className="link" onClick={load}>Tentar de novo</button>
         </div>
       )}
       <div className="filters" role="toolbar" aria-label="Filtrar por estado">

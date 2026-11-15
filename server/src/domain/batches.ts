@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { del } from '@vercel/blob';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AppContext, ModeContext } from '../context.js';
@@ -178,7 +179,8 @@ export async function removeMediaFile(mc: ModeContext, mediaId?: string): Promis
   if (inUse) return;
   const m = mc.media.get(mediaId);
   if (!m) return;
-  await fs.rm(path.join(mc.mediaDir, m.internalName), { force: true });
+  if (m.blobUrl) await del(m.blobUrl);
+  else await fs.rm(path.join(mc.mediaDir, m.internalName), { force: true });
   await mc.media.mutate((d) => {
     const i = d.findIndex((x) => x.id === mediaId);
     if (i >= 0) d.splice(i, 1);
@@ -248,7 +250,7 @@ export function summarize(ctx: AppContext, mc: ModeContext, b: Batch): BatchSumm
     }
   }
   if (enabled.includes('instagram')) {
-    issues.push({ level: 'info', platform: 'instagram', message: 'Instagram: a publicação acontece pela fila do app às 12:00 — o backend precisa estar ligado.' });
+    issues.push({ level: 'info', platform: 'instagram', message: 'Instagram: a publicação acontece pela fila do app às 12:00; configure a execução automática na nuvem.' });
   }
   if (enabled.includes('tiktok')) {
     const a = accounts.tiktok;

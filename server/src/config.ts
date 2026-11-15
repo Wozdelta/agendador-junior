@@ -44,8 +44,20 @@ export interface Config {
   mediaLinkTtlMinutes: number;
   /** Endereço público da interface (ex.: https://seu-app.vercel.app). Libera CORS/redirects para ele. */
   appUrl: string;
-  /** Segredo compartilhado com a Function de proxy da Vercel (cabeçalho x-agendador-proxy). */
-  proxySecret: string;
+  /** local = Node no seu computador; vercel = Vercel Functions (detectado por VERCEL=1). */
+  runtime: 'local' | 'vercel';
+  /** file = JSON em DATA_DIR; redis = Upstash Redis (obrigatório na Vercel). */
+  storage: 'file' | 'redis';
+  redis: { url: string; token: string; prefix: string };
+  /** blob = Vercel Blob para vídeos e capas (obrigatório na Vercel). */
+  mediaStorage: 'disk' | 'blob';
+  blobToken: string;
+  /** Protege /api/cron/tick (o Vercel Cron envia Authorization: Bearer CRON_SECRET). */
+  cronSecret: string;
+  /** Tempo que uma execução da fila usa antes de parar de pegar tarefas novas (ms). */
+  tickBudgetMs: number;
+  /** Validade da trava de uma tarefa em execução (ms). */
+  taskLeaseMs: number;
   google: { clientId: string; clientSecret: string; redirectUri: string };
   meta: {
     appId: string;
@@ -70,11 +82,16 @@ export interface Config {
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const port = num('PORT', 3001);
+  const vercel = process.env.VERCEL === '1';
+  // A integração Upstash da Vercel pode criar UPSTASH_REDIS_REST_* ou KV_REST_API_*.
+  const redisUrl = str('UPSTASH_REDIS_REST_URL') || str('KV_REST_API_URL');
+  const redisToken = str('UPSTASH_REDIS_REST_TOKEN') || str('KV_REST_API_TOKEN');
   const base: Config = {
     host: str('HOST', '127.0.0.1'),
     port,
     webOrigin: str('WEB_ORIGIN', 'http://localhost:5173'),
-    dataDir: path.resolve(PROJECT_ROOT, str('DATA_DIR', 'data')),
+    // Na Vercel só /tmp é gravável (usado apenas como área temporária).
+    dataDir: vercel ? '/tmp/agendador' : path.resolve(PROJECT_ROOT, str('DATA_DIR', 'data')),
     timezone: str('TIMEZONE', 'America/Sao_Paulo'),
     publishTime: str('PUBLISH_TIME', '12:00'),
     minLeadMinutes: num('MIN_LEAD_MINUTES', 15),
@@ -89,8 +106,15 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     tokenKey: str('TOKEN_ENCRYPTION_KEY'),
     publicBaseUrl: str('PUBLIC_BASE_URL').replace(/\/+$/, ''),
     mediaLinkTtlMinutes: num('MEDIA_LINK_TTL_MINUTES', 120),
-    appUrl: str('APP_URL').replace(/\/+$/, ''),
-    proxySecret: str('BACKEND_PROXY_SECRET'),
+    appUrl: (str('APP_URL') || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '')).replace(/\/+$/, ''),
+    runtime: vercel ? 'vercel' : 'local',
+    storage: redisUrl && redisToken ? 'redis' : 'file',
+    redis: { url: redisUrl, token: redisToken, prefix: str('REDIS_PREFIX', 'agj') },
+    mediaStorage: str('BLOB_READ_WRITE_TOKEN') ? 'blob' : 'disk',
+    blobToken: str('BLOB_READ_WRITE_TOKEN'),
+    cronSecret: str('CRON_SECRET'),
+    tickBudgetMs: num('TICK_BUDGET_SECONDS', vercel ? 240 : 3600) * 1000,
+    taskLeaseMs: num('TASK_LEASE_MINUTES', vercel ? 6 : 30) * 60_000,
     google: {
       clientId: str('GOOGLE_CLIENT_ID'),
       clientSecret: str('GOOGLE_CLIENT_SECRET'),
@@ -116,5 +140,14 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
       inboxLeadMinutes: num('TIKTOK_INBOX_LEAD_MINUTES', 30),
     },
   };
+  // Na Vercel, os callbacks padrão apontam para o próprio domínio do app.
+  if (vercel && base.appUrl) {
+    if (!process.env.PUBLIC_BASE_URL) base.publicBaseUrl = base.appUrl;
+    const cb = (p: string) => `${base.appUrl}/api/oauth/${p}/callback`;
+    if (!process.env.GOOGLE_REDIRECT_URI) base.google.redirectUri = cb('youtube');
+    if (!process.env.META_REDIRECT_URI) base.meta.redirectUri = cb('facebook');
+    if (!process.env.TIKTOK_REDIRECT_URI) base.tiktok.redirectUri = cb('tiktok');
+    if (!process.env.WEB_ORIGIN) base.webOrigin = base.appUrl;
+  }
   return { ...base, ...overrides };
 }

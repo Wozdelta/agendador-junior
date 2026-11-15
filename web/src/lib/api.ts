@@ -1,4 +1,4 @@
-// Cliente da API local. Nenhuma credencial passa pelo navegador: o backend guarda
+// Cliente da API no mesmo domínio. Nenhuma credencial passa pelo navegador: a API guarda
 // tokens e segredos; aqui só trafegam dados de lote, agenda e estado das conexões.
 import type {
   BatchDTO,
@@ -9,6 +9,7 @@ import type {
   SettingsDTO,
   TaskDTO,
 } from '../../../server/src/shared/types';
+import { upload } from '@vercel/blob/client';
 
 export class ApiError extends Error {
   constructor(
@@ -34,10 +35,18 @@ async function call<T>(method: string, url: string, body?: unknown, opts: { idem
     res = await fetch(url, {
       credentials: 'same-origin', method, headers, body: body === undefined ? undefined : JSON.stringify(body), keepalive: opts.keepalive });
   } catch {
-    throw new ApiError(0, 'Sem conexão com o backend. Verifique se o servidor está rodando (npm run dev).');
+    throw new ApiError(0, 'Serviço indisponível ou sem conexão. Tente de novo em instantes.');
   }
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : undefined;
+  let text: string;
+  try { text = await res.text(); }
+  catch { throw new ApiError(res.status, 'A conexão com o serviço foi interrompida. Tente de novo em instantes.', undefined, 'invalid_response'); }
+  let data: any;
+  try {
+    if (!res.headers.get('content-type')?.includes('json')) throw new Error();
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    throw new ApiError(res.status, `Serviço indisponível: resposta inválida da API (HTTP ${res.status}). Tente de novo em instantes.`, undefined, 'invalid_response');
+  }
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`, data?.details, data?.code);
   return data as T;
 }
@@ -89,10 +98,10 @@ export const api = {
 
 /**
  * Envio de arquivo com progresso (XHR, pois fetch não informa progresso de upload).
- * A URL vem do backend: rota /api local ou link assinado direto no backend quando a
- * interface está hospedada (os vídeos não passam pela Vercel).
+ * A URL vem da API: multipart local ou upload direto para o Vercel Blob.
  */
 export function uploadFile(url: string, file: File, onProgress: (pct: number) => void): Promise<BatchDTO> {
+  if (url.startsWith('blob:')) return uploadBlob(url, file, onProgress);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
@@ -104,7 +113,8 @@ export function uploadFile(url: string, file: File, onProgress: (pct: number) =>
       } catch {
         data = undefined;
       }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      if (xhr.status >= 200 && xhr.status < 300 && data) resolve(data);
+      else if (xhr.status >= 200 && xhr.status < 300) reject(new ApiError(xhr.status, 'Resposta inválida no envio. Tente de novo.'));
       else reject(new ApiError(xhr.status, data?.error ?? `Erro ${xhr.status} no envio`));
     };
     xhr.onerror = () => reject(new ApiError(0, 'Falha de rede durante o envio.'));
@@ -112,6 +122,29 @@ export function uploadFile(url: string, file: File, onProgress: (pct: number) =>
     fd.append('file', file, file.name);
     xhr.send(fd);
   });
+}
+
+async function uploadBlob(url: string, file: File, onProgress: (pct: number) => void): Promise<BatchDTO> {
+  const [, mode, batchId, itemId, kind] = url.split(':');
+  if (kind === 'cover' && file.type === 'image/png') {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new ApiError(0, 'Não foi possível preparar a capa. Envie uma imagem JPEG.');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(bitmap, 0, 0); bitmap.close();
+    const jpeg = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+    if (!jpeg) throw new ApiError(0, 'Não foi possível converter a capa. Envie uma imagem JPEG.');
+    file = new File([jpeg], 'capa.jpg', { type: 'image/jpeg' });
+  }
+  const { ticket, pathname } = await call<{ ticket: string; pathname: string }>('POST', '/api/blob/prepare', { batchId, itemId, kind });
+  const blob = await upload(pathname, file, {
+    access: 'public', handleUploadUrl: '/api/blob/token', multipart: true,
+    clientPayload: JSON.stringify({ ticket, mode }),
+    onUploadProgress: p => onProgress(Math.round(p.percentage)),
+  });
+  return call<BatchDTO>('POST', '/api/blob/complete', { ticket, url: blob.url });
 }
 
 /** Link de download a partir da URL de mídia entregue pelo backend. */

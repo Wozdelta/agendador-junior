@@ -19,6 +19,7 @@ export class TaskRuntime {
   async save(fn: (t: Task) => void): Promise<Task> {
     const now = this.now().toISOString();
     this.snapshot = await this.mc.tasks.update(this.snapshot.id, (t) => {
+      if (this.snapshot.lock && t.lock?.bootId !== this.snapshot.lock.bootId) throw new Error('A execução perdeu a trava da tarefa.');
       fn(t);
       t.updatedAt = now;
     });

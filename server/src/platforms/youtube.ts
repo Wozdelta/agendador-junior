@@ -1,8 +1,8 @@
+import { openMedia, readMedia } from '../lib/mediaio.js';
 // YouTube Shorts — YouTube Data API v3 (consultada em 14/11/2026).
 // OAuth 2.0 para aplicativos de servidor web com acesso offline e PKCE.
 // Upload retomável em videos.insert com privacyStatus=private + publishAt.
 // Capa por thumbnails.set após processingDetails.processingStatus=succeeded.
-import fs from 'node:fs';
 import { DateTime } from 'luxon';
 import type { AppContext, ModeContext } from '../context.js';
 import { AppError, AuthError, LateError, ManualReviewError, PermanentError, RetryableError } from '../lib/errors.js';
@@ -192,6 +192,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       await rt.save((x) => (x.state = 'processing'));
       if (!t.remote.sessionUri) await this.createSession(rt);
       await this.upload(rt);
+      if (!rt.task.remoteId) return;
     }
     await this.verify(rt);
   }
@@ -256,6 +257,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     let video = 'video' in st ? st.video : undefined;
     if (!video && 'next' in st) {
       const start = st.next;
+      const end = this.ctx.config.runtime === 'vercel' ? Math.min(m.size - 1, start + 8 * 1024 * 1024 - 1) : m.size - 1;
       const res = await request(rt.task.remote.sessionUri, {
         method: 'PUT',
         fetchImpl: this.ctx.fetch,
@@ -264,12 +266,16 @@ export class YouTubeAdapter implements PlatformAdapter {
         duplex: 'half',
         headers: {
           Authorization: `Bearer ${await this.token(rt)}`,
-          'Content-Length': String(m.size - start),
-          'Content-Range': `bytes ${start}-${m.size - 1}/${m.size}`,
+          'Content-Length': String(end - start + 1),
+          'Content-Range': `bytes ${start}-${end}/${m.size}`,
           'Content-Type': m.mime,
         },
-        body: fs.createReadStream(rt.mediaPath(m), { start }) as any,
+        body: await openMedia(this.ctx, rt.mc, m, { start, end }) as any,
       });
+      if (res.status === 308 && end < m.size - 1) {
+        await rt.save(x => { x.nextRunAt = rt.now().toISOString(); });
+        return;
+      }
       if (res.status !== 200 && res.status !== 201) {
         if (res.status === 308 || res.status >= 500) throw new RetryableError('Upload interrompido; será retomado do ponto em que parou.');
         classify(res, 'Upload do vídeo', rt.now());
@@ -348,7 +354,7 @@ export class YouTubeAdapter implements PlatformAdapter {
       method: 'POST',
       fetchImpl: this.ctx.fetch,
       headers: { Authorization: `Bearer ${await this.token(rt)}`, 'Content-Type': cover.mime },
-      body: await fs.promises.readFile(rt.mediaPath(cover)),
+      body: new Uint8Array(await readMedia(this.ctx, rt.mc, cover)),
     });
     if (res.status === 200) {
       await rt.save((x) => (x.cover = { state: 'applied', message: 'Capa aplicada com thumbnails.set.' }));

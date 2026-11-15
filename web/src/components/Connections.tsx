@@ -22,7 +22,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
   const [flash] = useState(() => (params.get('conectado') ? `Conta conectada: ${params.get('conectado')}` : null));
   const [flashErr] = useState(() => params.get('erro'));
 
-  const load = () => api.connections().then(setList).catch((e) => setError(e.message));
+  const load = () => { setError(null); return api.connections().then(setList).catch((e) => setError(e.message)); };
   useEffect(() => {
     load();
   }, []);
@@ -43,7 +43,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
       {demo && <div className="alert demo">Modo demonstração: as contas abaixo são simuladas. Desative o modo em Configurações para conectar contas reais.</div>}
       {flash && <div className="alert success">{flash}</div>}
       {flashErr && <div className="alert error">Falha na conexão: {flashErr}</div>}
-      {error && <div className="alert error">{error}</div>}
+      {error && <div className="alert error" role="alert">{error} <button onClick={load}>Tentar de novo</button></div>}
       <div className="conn-grid">
         {list.map((c) => (
           <section key={c.platform} className={`conn ${c.platform}`}>

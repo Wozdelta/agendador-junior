@@ -9,7 +9,9 @@ import type {
 } from '../shared/types.js';
 
 export interface MediaRecord extends MediaInfo {
-  internalName: string; // nome gerado; o nome original nunca vira caminho
+  internalName: string; // nome gerado (disco) ou pathname no Blob; o nome original nunca vira caminho
+  /** URL no Vercel Blob (produção na Vercel). Sem ela, o arquivo está em DATA_DIR. */
+  blobUrl?: string;
   createdAt: string;
 }
 
@@ -80,7 +82,8 @@ export interface Task {
   title: string;
   description: string;
   options: Partial<PlatformTexts>;
-  lock?: { bootId: string; at: string };
+  /** Trava com validade (lease): impede que duas execuções processem a mesma tarefa. */
+  lock?: { bootId: string; at: string; until?: string };
   history: TaskHistory[];
   createdAt: string;
   updatedAt: string;

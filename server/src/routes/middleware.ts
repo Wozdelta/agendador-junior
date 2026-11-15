@@ -2,12 +2,11 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { AppContext } from '../context.js';
 import { AppError } from '../lib/errors.js';
 import { log } from '../lib/log.js';
-import { safeEqual } from '../lib/session.js';
 import { linksFor, type Links } from '../lib/links.js';
 
-/** Links (mídia/upload) adequados ao tipo de acesso desta requisição. */
-export function linksOf(ctx: AppContext, res: Response): Links {
-  return linksFor(ctx, ctx.current(), res.locals.access === 'remote' ? 'remote' : 'local');
+/** Links de mídia e upload (Blob na Vercel; rotas /api localmente). */
+export function linksOf(ctx: AppContext, _res?: Response): Links {
+  return linksFor(ctx, ctx.current());
 }
 
 export const ah =
@@ -28,52 +27,29 @@ export function allowedOrigins(ctx: AppContext): string[] {
 }
 
 /**
- * Quem pode chegar ao backend:
- * - localhost (uso local): tudo;
- * - qualquer origem: links de mídia assinados (/public/media, /direct/*) e retornos OAuth;
- * - a Function de proxy da Vercel (cabeçalho x-agendador-proxy com o segredo): /api;
- * - o resto: 403.
+ * Quem pode chegar à API:
+ * - na Vercel: tudo em /api (mesmo domínio da interface; sem login, a pedido do dono);
+ *   o cron exige CRON_SECRET e escrita de outras origens é recusada (originGuard);
+ * - no Node local: localhost; de fora, só links de mídia assinados (/public/media)
+ *   e retornos OAuth (por exemplo, via túnel HTTPS).
  */
 export function externalGuard(ctx: AppContext): RequestHandler {
   const publicHost = ctx.config.publicBaseUrl ? new URL(ctx.config.publicBaseUrl).host : null;
   return (req, res, next) => {
+    if (ctx.config.runtime === 'vercel') return next();
     const host = String(req.headers.host ?? '');
     const viaPublicHost = publicHost !== null && host === publicHost;
     const forwarded = !!req.headers['x-forwarded-for'] || !!req.headers['forwarded'];
-    const viaProxy = req.headers['x-agendador-proxy'] !== undefined;
-    const local = isLoopback(req.socket.remoteAddress) && !viaPublicHost && !forwarded && !viaProxy;
-    if (local) {
-      res.locals.access = 'local';
-      return next();
-    }
+    if (isLoopback(req.socket.remoteAddress) && !viaPublicHost && !forwarded) return next();
     if (req.method === 'GET' && (req.path.startsWith('/public/media/') || /^\/api\/oauth\/[a-z]+\/callback$/.test(req.path))) return next();
-    if (req.path.startsWith('/direct/')) return next(); // token assinado validado na rota
-    if (ctx.config.proxySecret && req.path.startsWith('/api/') && safeEqual(req.get('x-agendador-proxy'), ctx.config.proxySecret)) {
-      res.locals.access = 'remote';
-      return next();
-    }
-    res.status(403).json({ error: 'Acesso externo não permitido a esta rota.' });
+    if (req.path === '/api/cron/tick') return next(); // protegido por CRON_SECRET
+    sendError(res, 403, 'Acesso externo não permitido a esta rota.', 'forbidden');
   };
 }
 
-/** CORS só para as rotas /direct/* (upload e mídia assinados), liberado para APP_URL. */
-export function directCors(ctx: AppContext): RequestHandler {
-  return (req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin && allowedOrigins(ctx).includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, PUT, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
-      res.setHeader('Access-Control-Max-Age', '600');
-    }
-    if (req.method === 'OPTIONS') {
-      res.status(origin && allowedOrigins(ctx).includes(origin) ? 204 : 403).end();
-      return;
-    }
-    next();
-  };
+/** Erro JSON padronizado: { error, code, details? }. */
+export function sendError(res: Response, status: number, message: string, code: string, details?: unknown): void {
+  res.status(status).json({ error: message, code, ...(details !== undefined ? { details } : {}) });
 }
 
 /** Bloqueia pedidos de escrita vindos de outras origens (CSRF). */
@@ -82,7 +58,7 @@ export function originGuard(ctx: AppContext): RequestHandler {
     if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
     const origin = req.headers.origin;
     if (origin && !allowedOrigins(ctx).includes(origin)) {
-      res.status(403).json({ error: 'Origem não permitida.' });
+      sendError(res, 403, 'Origem não permitida.', 'origin_not_allowed');
       return;
     }
     next();
@@ -145,16 +121,31 @@ export function idempotent(ctx: AppContext, scope: string): RequestHandler {
   });
 }
 
+const CODE_BY_STATUS: Record<number, string> = {
+  400: 'bad_request',
+  401: 'unauthorized',
+  403: 'forbidden',
+  404: 'not_found',
+  409: 'conflict',
+  413: 'too_large',
+  415: 'unsupported_media',
+  422: 'invalid',
+  429: 'rate_limited',
+  502: 'upstream_error',
+  503: 'unavailable',
+};
+
+/** Toda resposta de erro da API é JSON: { error, code, details? } com o status HTTP correto. */
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction): void {
   req.resume();
+  if (res.headersSent) return;
   if (err instanceof AppError) {
-    res.status(err.status).json({ error: err.message, code: err.code, details: err.details });
+    sendError(res, err.status, err.message, err.code ?? CODE_BY_STATUS[err.status] ?? 'error', err.details);
     return;
   }
-  if (err?.type === 'entity.parse.failed') {
-    res.status(400).json({ error: 'JSON inválido.' });
-    return;
-  }
+  if (err?.type === 'entity.parse.failed') return sendError(res, 400, 'JSON inválido.', 'invalid_json');
+  if (err?.type === 'entity.too.large') return sendError(res, 413, 'Corpo da requisição grande demais.', 'too_large');
+  if (err?.name === 'ConflictError') return sendError(res, 409, err.message, 'conflict');
   log.error('Erro inesperado:', err?.stack ?? err);
-  res.status(500).json({ error: 'Erro interno. Veja o log do servidor.' });
+  sendError(res, 500, 'Erro interno do servidor. Tente de novo em instantes.', 'internal_error');
 }

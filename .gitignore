@@ -6,7 +6,6 @@
 *.env
 !.env.example
 !**/.env.example
-.env.example
 
 # Credenciais OAuth baixadas dos consoles (Google: client_secret_*.json etc.)
 client_secret*.json

@@ -3,9 +3,9 @@ import path from 'node:path';
 import express from 'express';
 import type { AppContext } from './context.js';
 import { PROJECT_ROOT } from './config.js';
-import { directRoutes } from './routes/access.js';
 import { batchRoutes } from './routes/batches.js';
-import { directCors, errorHandler, externalGuard, noStore, originGuard } from './routes/middleware.js';
+import { errorHandler, externalGuard, noStore, originGuard } from './routes/middleware.js';
+import { cloudRoutes } from './routes/cloud.js';
 import { connectionRoutes, mediaRoutes, publicRoutes, settingsRoutes, taskRoutes, webDist } from './routes/other.js';
 
 export function createApp(ctx: AppContext): express.Express {
@@ -14,14 +14,12 @@ export function createApp(ctx: AppContext): express.Express {
   app.set('etag', false);
   app.use(externalGuard(ctx));
   app.use(publicRoutes(ctx));
-  // Upload e mídia por link assinado, direto no backend (sem passar pela Vercel).
-  app.use('/direct', directCors(ctx));
-  app.use(directRoutes(ctx));
 
   const api = express.Router();
   api.use(noStore);
   api.use(originGuard(ctx));
   api.use(express.json({ limit: '1mb' }));
+  api.use(cloudRoutes(ctx));
   api.get('/health', (_req, res) => {
     res.json({ ok: true, mode: ctx.settings.get().mode });
   });
@@ -31,7 +29,7 @@ export function createApp(ctx: AppContext): express.Express {
   api.use(connectionRoutes(ctx));
   api.use(mediaRoutes(ctx));
   api.use((_req, res) => {
-    res.status(404).json({ error: 'Rota não encontrada.' });
+    res.status(404).json({ error: 'Rota não encontrada.', code: 'not_found' });
   });
   app.use('/api', api);
 

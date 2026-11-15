@@ -34,7 +34,7 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
 export async function request(url: string, opts: RequestOptions = {}): Promise<HttpResponse> {
   const f = opts.fetchImpl ?? fetch;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60_000);
+  const timer = setTimeout(() => ctrl.abort(), Math.min(opts.timeoutMs ?? 60_000, process.env.VERCEL === '1' ? 60_000 : Infinity));
   let res: Response;
   try {
     res = await f(url, {

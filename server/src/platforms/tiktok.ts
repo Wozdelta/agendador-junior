@@ -1,8 +1,8 @@
+import { openMedia } from '../lib/mediaio.js';
 // TikTok — Login Kit (Web) + Content Posting API (consultada em 14/11/2026).
 // Padrão pessoal: "Ação manual necessária" (copiar descrição + baixar vídeo).
 // Com video.upload aprovado: envio à caixa de entrada (inbox) — o criador finaliza no app.
 // Com video.publish aprovado e caso de uso elegível: Direct Post com creator_info.
-import fs from 'node:fs';
 import type { AppContext, ModeContext } from '../context.js';
 import { AppError, AuthError, ManualReviewError, PermanentError, RetryableError } from '../lib/errors.js';
 import { form, parseRetryAfter, request, type HttpResponse } from '../lib/http.js';
@@ -180,6 +180,9 @@ export class TikTokAdapter implements PlatformAdapter {
   async run(rt: TaskRuntime): Promise<void> {
     const t = rt.task;
     const strategy = t.remote.strategy ?? 'manual';
+    if ((strategy === 'direct' && !this.ctx.config.tiktok.directPostApproved) || (strategy === 'inbox' && !this.ctx.config.tiktok.uploadApproved)) {
+      throw new ManualReviewError('A permissão de envio do TikTok não está habilitada. Use o modo manual.');
+    }
     if (strategy === 'manual') {
       await rt.save((x) => {
         x.state = 'manual_action';
@@ -225,7 +228,9 @@ export class TikTokAdapter implements PlatformAdapter {
     const chunkSize = m.size < MIN_CHUNK ? m.size : CHUNK;
     const total = Math.max(1, Math.floor(m.size / chunkSize));
     const source_info = { source: 'FILE_UPLOAD', video_size: m.size, chunk_size: chunkSize, total_chunk_count: total };
-    const data =
+    const data = t.remote.publishId && t.remote.uploadUrl
+      ? { publish_id: t.remote.publishId, upload_url: t.remote.uploadUrl }
+      :
       strategy === 'direct'
         ? await this.api(rt, '/v2/post/publish/video/init/', {
             post_info: {
@@ -244,10 +249,10 @@ export class TikTokAdapter implements PlatformAdapter {
     await rt.save((x) => {
       x.remote.publishId = data.publish_id;
       x.remoteId = data.publish_id;
+      x.remote.uploadUrl = data.upload_url;
     });
     // Envio sequencial dos pedaços (o último pode ser maior que chunk_size).
-    const file = rt.mediaPath(m);
-    for (let i = 0; i < total; i++) {
+    for (let i = Number(rt.task.remote.uploadChunk ?? 0); i < total; i++) {
       const start = i * chunkSize;
       const end = i === total - 1 ? m.size - 1 : start + chunkSize - 1;
       const res = await request(data.upload_url, {
@@ -257,12 +262,14 @@ export class TikTokAdapter implements PlatformAdapter {
         timeoutMs: 30 * 60_000,
         duplex: 'half',
         headers: { 'Content-Type': m.mime, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${m.size}` },
-        body: fs.createReadStream(file, { start, end }) as any,
+        body: await openMedia(this.ctx, rt.mc, m, { start, end }) as any,
       });
       if (res.status !== 201 && res.status !== 206) {
         if (res.status === 403) throw new RetryableError('O link de upload do TikTok expirou; o envio será reiniciado.');
         classify(res, 'Upload para o TikTok');
       }
+      await rt.save(x => { x.remote.uploadChunk = i + 1; x.nextRunAt = rt.now().toISOString(); });
+      if (this.ctx.config.runtime === 'vercel' && i < total - 1) return;
     }
     await rt.save((x) => {
       x.videoUploaded = true;
@@ -323,9 +330,16 @@ export class TikTokAdapter implements PlatformAdapter {
         await rt.note('Reconciliação: o TikTok já tinha recebido o vídeo. Nada será reenviado.');
         return this.poll(rt);
       }
-      // Upload incompleto não gera publicação: reinicia com um novo publish_id.
+      if (d?.status === 'PROCESSING_UPLOAD' && t.remote.uploadUrl) {
+        // An interrupted chunk cannot be verified reliably. Preserve publish_id
+        // and ask for review instead of starting a second publication.
+        throw new ManualReviewError('Upload interrompido no TikTok. Confira o envio antes de autorizar uma nova tentativa.');
+      }
+      // Falha confirmada antes de publicar: permite uma nova sessão.
       await rt.save((x) => {
         x.remote.publishId = undefined;
+        x.remote.uploadUrl = undefined;
+        x.remote.uploadChunk = 0;
         x.videoUploaded = false;
       });
     }

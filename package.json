@@ -1,6 +1,7 @@
 {
   "name": "agendador-junior",
   "private": true,
+  "type": "module",
   "version": "1.0.0",
   "description": "Agendamento em lote de vídeos curtos para Facebook Reels, YouTube Shorts, Instagram Reels e TikTok",
   "workspaces": [

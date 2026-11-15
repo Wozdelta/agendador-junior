@@ -44,7 +44,7 @@ export class Worker {
       n += await mc.tasks.mutate((d) => {
         let c = 0;
         for (const t of d) {
-          if (t.lock && t.lock.bootId !== this.ctx.bootId) {
+          if (t.lock && (this.ctx.config.storage === 'file' ? t.lock.bootId !== this.ctx.bootId : new Date(t.lock.until ?? t.lock.at).getTime() <= now.getTime())) {
             t.lock = undefined;
             t.remote.needsReconcile = true;
             t.nextRunAt = now.toISOString();
@@ -67,10 +67,11 @@ export class Worker {
   }
 
   /** Um ciclo: executa as tarefas vencidas respeitando a concorrência. Retorna quando todas terminam. */
-  async tick(): Promise<void> {
-    if (this.ticking) return;
+  async tick(): Promise<number> {
+    if (this.ticking) return 0;
     this.ticking = true;
     try {
+      await this.ctx.refresh(['demo', 'real']);
       const jobs: Promise<void>[] = [];
       for (const mc of Object.values(this.ctx.modes)) {
         const now = this.ctx.clock.now();
@@ -93,6 +94,7 @@ export class Worker {
         }
       }
       await Promise.all(jobs);
+      return jobs.length;
     } finally {
       this.ticking = false;
     }
@@ -114,11 +116,14 @@ export class Worker {
     const late = mc.tasks.find(
       (t) =>
         (t.state === 'queued' || t.state === 'processing') &&
+        (!t.lock || new Date(t.lock.until ?? t.lock.at) <= now) &&
         !this.running.has(t.id) &&
         addMinutes(new Date(t.plannedAt), tol) < now,
     );
     for (const t of late) {
       await mc.tasks.update(t.id, (x) => {
+        if (x.lock && new Date(x.lock.until ?? x.lock.at) > now) return;
+        if (!['queued', 'processing'].includes(x.state)) return;
         x.state = 'late';
         x.nextRunAt = undefined;
         x.delayNote = `Não foi possível publicar até ${tol} min após o horário planejado. Escolha uma nova data.`;
@@ -134,9 +139,15 @@ export class Worker {
       if (!t0 || !RUNNABLE.has(t0.state)) return;
       const nowIso = this.ctx.clock.now().toISOString();
       // Trava persistida: se o processo cair aqui, a próxima inicialização reconcilia.
-      const locked = await mc.tasks.update(id, (t) => {
-        t.lock = { bootId: this.ctx.bootId, at: nowIso };
+      const locked = await mc.tasks.mutate((tasks) => {
+        const t = tasks.find(x => x.id === id);
+        if (!t || !this.isDue(t, new Date(nowIso))) return null;
+        if (t.lock && new Date(t.lock.until ?? t.lock.at).getTime() > Date.parse(nowIso)) return null;
+        if (t.lock) t.remote.needsReconcile = true;
+        t.lock = { bootId: this.ctx.bootId, at: nowIso, until: new Date(Date.parse(nowIso) + this.ctx.config.taskLeaseMs).toISOString() };
+        return t;
       });
+      if (!locked) return;
       const rt = new TaskRuntime(this.ctx, mc, locked);
       const adapter = adapterFor(this.ctx, mc.mode as AppMode, locked.platform as Platform);
       try {

@@ -1,9 +1,9 @@
+import { openMedia, readMedia } from '../lib/mediaio.js';
 // Facebook Reels — Reels Publishing API (Graph v27.0, consultada em 14/11/2026).
 // start -> upload em rupload.facebook.com -> status -> finish (SCHEDULED + scheduled_publish_time).
 // Janela documentada: mais de 10 minutos e até 29 dias a partir do pedido.
 // Limite: 30 Reels publicados via API por Página em 24 h (regra do endpoint de Reels,
 // diferente do limite do feed da Página).
-import fs from 'node:fs';
 import type { AppContext, ModeContext } from '../context.js';
 import { AppError, LateError, PermanentError, RetryableError } from '../lib/errors.js';
 import { request } from '../lib/http.js';
@@ -153,7 +153,7 @@ export class FacebookAdapter implements PlatformAdapter {
           file_size: String(m.size),
           'Content-Type': 'application/octet-stream',
         },
-        body: fs.createReadStream(rt.mediaPath(m), { start: offset }) as any,
+        body: await openMedia(this.ctx, rt.mc, m, { start: offset }) as any,
       });
       if (res.status !== 200 || !res.json?.success) throw metaError(res, 'Upload do Reel');
     }
@@ -250,7 +250,7 @@ export class FacebookAdapter implements PlatformAdapter {
     const fd = new FormData();
     fd.set('access_token', token);
     fd.set('is_preferred', 'true');
-    fd.set('source', new Blob([await fs.promises.readFile(rt.mediaPath(cover))], { type: cover.mime }), 'capa');
+    fd.set('source', new Blob([new Uint8Array(await readMedia(this.ctx, rt.mc, cover))], { type: cover.mime }), 'capa');
     const res = await request(`https://graph.facebook.com/${this.ctx.config.meta.graphVersion}/${rt.task.remoteId}/thumbnails`, {
       method: 'POST',
       fetchImpl: this.ctx.fetch,

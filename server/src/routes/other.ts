@@ -62,6 +62,7 @@ export function mediaRoutes(ctx: AppContext): Router {
     const mc = ctx.current();
     const m = mc.media.get(String(req.params.id));
     if (!m) throw new AppError(404, 'Arquivo não encontrado.');
+    if (m.blobUrl) return res.redirect(302, m.blobUrl);
     if (req.query.download) res.attachment(m.originalName);
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.type(m.mime);
@@ -104,8 +105,8 @@ export function settingsRoutes(ctx: AppContext): Router {
       publicBaseUrlConfigured: !!ctx.config.publicBaseUrl,
       tiktokMode: tt === 'inbox' || tt === 'direct' ? tt : 'manual',
       graphVersion: ctx.config.meta.graphVersion,
-      remoteAccess: remote,
-      directLinks: !!ctx.config.publicBaseUrl,
+      remoteAccess: ctx.config.runtime === 'vercel' || remote,
+      directLinks: ctx.config.mediaStorage === 'blob' || !!ctx.config.publicBaseUrl,
     };
   };
   r.get('/settings', (_req, res) => {
@@ -156,39 +157,47 @@ export function connectionRoutes(ctx: AppContext): Router {
     if (!ctx.vault.available) throw new AppError(409, 'Defina TOKEN_ENCRYPTION_KEY no .env antes de conectar contas.');
     const ret = String(req.query.return ?? '');
     const returnTo = allowedOrigins(ctx).includes(ret) ? ret : ctx.config.webOrigin;
-    const state = crypto.randomBytes(24).toString('base64url');
-    // limpa estados vencidos
-    for (const [k, v] of ctx.oauthStates) if (Date.now() - v.createdAt > OAUTH_TTL) ctx.oauthStates.delete(k);
+    const nonce = crypto.randomBytes(24).toString('base64url');
+    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ nonce, platform: p, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
+    let state: string;
     let url: string;
     if (platform === 'youtube') {
       if (!ctx.config.google.clientId) throw new AppError(409, 'Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no .env.');
       const { verifier, challenge } = pkcePair();
-      ctx.oauthStates.set(state, { platform, verifier, createdAt: Date.now(), returnTo });
+      state = pack(platform, verifier);
       url = youtubeAuthUrl(ctx, state, challenge);
     } else if (platform === 'facebook' || platform === 'instagram') {
       if (!ctx.config.meta.appId) throw new AppError(409, 'Configure META_APP_ID e META_APP_SECRET no .env.');
-      ctx.oauthStates.set(state, { platform: 'facebook', createdAt: Date.now(), returnTo });
+      state = pack('facebook');
       url = metaAuthUrl(ctx, state);
     } else if (platform === 'tiktok') {
       if (!ctx.config.tiktok.clientKey || !ctx.config.tiktok.redirectUri) {
         throw new AppError(409, 'Configure TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET e TIKTOK_REDIRECT_URI (HTTPS) no .env.');
       }
-      ctx.oauthStates.set(state, { platform, createdAt: Date.now(), returnTo });
+      state = pack(platform);
       url = tiktokAuthUrl(ctx, state);
     } else throw new AppError(404, 'Plataforma desconhecida.');
     res.redirect(302, url);
   }));
 
-  r.get('/oauth/:platform/callback', async (req, res) => {
+  r.get('/oauth/:platform/callback', ah(async (req, res) => {
     const platform = String(req.params.platform);
     const state = String(req.query.state ?? '');
-    const pending = ctx.oauthStates.get(state);
-    ctx.oauthStates.delete(state); // uso único
+    let pending: { nonce: string; platform: string; verifier?: string; createdAt: number; returnTo: string } | undefined;
+    try { pending = ctx.vault.decrypt(state, 'oauth-state'); } catch {}
     const back = (q: string) => res.redirect(302, `${pending?.returnTo ?? ctx.config.webOrigin}/#/conexoes?${q}`);
     if (!pending || pending.platform !== platform || Date.now() - pending.createdAt > OAUTH_TTL) {
-      res.status(400).send('Estado OAuth inválido ou expirado. Volte ao aplicativo e tente conectar novamente.');
+      res.status(400).json({ error: 'Estado OAuth inválido ou expirado. Volte ao aplicativo e tente conectar novamente.', code: 'invalid_oauth_state' });
       return;
     }
+    const nonce = pending.nonce;
+    const consumed = await ctx.oauthUsed.mutate(d => {
+      for (const [key, expiry] of Object.entries(d.used)) if (expiry < Date.now()) delete d.used[key];
+      if (d.used[nonce]) return false;
+      d.used[nonce] = Date.now() + OAUTH_TTL;
+      return true;
+    });
+    if (!consumed) throw new AppError(400, 'Estado OAuth já utilizado.', undefined, 'invalid_oauth_state');
     if (req.query.error) return back(`erro=${encodeURIComponent(String(req.query.error_description ?? req.query.error))}`);
     const code = String(req.query.code ?? '');
     try {
@@ -201,7 +210,7 @@ export function connectionRoutes(ctx: AppContext): Router {
       log.error(`OAuth ${platform}:`, err.message);
       back(`erro=${encodeURIComponent(err.message)}`);
     }
-  });
+  }));
 
   r.post('/connections/facebook/page', ah(async (req, res) => {
     const pageId = String(req.body?.pageId ?? '');

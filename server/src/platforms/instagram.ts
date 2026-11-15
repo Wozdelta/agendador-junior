@@ -1,3 +1,4 @@
+import { openMedia } from '../lib/mediaio.js';
 // Instagram Reels — Instagram API com Facebook Login (Graph v27.0, consultada em 14/11/2026).
 // Container media_type=REELS criado perto do horário, status_code até FINISHED e
 // media_publish no horário. Containers expiram em 24 h; 400 containers por 24 h;
@@ -17,6 +18,7 @@ import { getConn } from './tokens.js';
 import type { AccountChoice, PlatformAdapter, TaskRuntime } from './types.js';
 
 export function publicMediaUrl(ctx: AppContext, mc: ModeContext, m: MediaRecord): string | null {
+  if (m.blobUrl) return m.blobUrl;
   if (!ctx.config.publicBaseUrl) return null;
   const exp = ctx.clock.now().getTime() + ctx.config.mediaLinkTtlMinutes * 60_000;
   // O token amarra modo + nome interno do arquivo + validade: serve só aquele arquivo.
@@ -119,6 +121,7 @@ export class InstagramAdapter implements PlatformAdapter {
   private async coverUrl(rt: TaskRuntime): Promise<string | null> {
     const cover = rt.cover();
     if (!cover || !this.ctx.config.publicBaseUrl) return null;
+    if (cover.blobUrl) return cover.mime === 'image/jpeg' ? cover.blobUrl : null;
     let jpeg = cover;
     if (cover.mime !== 'image/jpeg') {
       // A capa do Reel precisa ser JPEG: gera uma cópia convertida.
@@ -169,7 +172,7 @@ export class InstagramAdapter implements PlatformAdapter {
       timeoutMs: 6 * 3600_000,
       duplex: 'half',
       headers: { Authorization: `OAuth ${token}`, offset: '0', file_size: String(m.size), 'Content-Type': 'application/octet-stream' },
-      body: fs.createReadStream(rt.mediaPath(m)) as any,
+      body: await openMedia(this.ctx, rt.mc, m) as any,
     });
     if (res.status !== 200 || res.json?.success === false) throw metaError(res, 'Upload do vídeo para o Instagram');
     await rt.save((x) => {
