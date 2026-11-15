@@ -8,8 +8,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "hash-password": "tsx scripts/hash-password.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "busboy": "^1.6.0",

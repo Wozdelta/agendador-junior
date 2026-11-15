@@ -3,9 +3,9 @@ import path from 'node:path';
 import express from 'express';
 import type { AppContext } from './context.js';
 import { PROJECT_ROOT } from './config.js';
-import { authRoutes, directRoutes } from './routes/access.js';
+import { directRoutes } from './routes/access.js';
 import { batchRoutes } from './routes/batches.js';
-import { directCors, errorHandler, externalGuard, noStore, originGuard, sessionGuard } from './routes/middleware.js';
+import { directCors, errorHandler, externalGuard, noStore, originGuard } from './routes/middleware.js';
 import { connectionRoutes, mediaRoutes, publicRoutes, settingsRoutes, taskRoutes, webDist } from './routes/other.js';
 
 export function createApp(ctx: AppContext): express.Express {
@@ -21,12 +21,10 @@ export function createApp(ctx: AppContext): express.Express {
   const api = express.Router();
   api.use(noStore);
   api.use(originGuard(ctx));
-  api.use(sessionGuard(ctx));
   api.use(express.json({ limit: '1mb' }));
   api.get('/health', (_req, res) => {
     res.json({ ok: true, mode: ctx.settings.get().mode });
   });
-  api.use(authRoutes(ctx));
   api.use(settingsRoutes(ctx));
   api.use(batchRoutes(ctx));
   api.use(taskRoutes(ctx));

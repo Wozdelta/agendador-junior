@@ -2,7 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { AppContext } from '../context.js';
 import { AppError } from '../lib/errors.js';
 import { log } from '../lib/log.js';
-import { readCookie, safeEqual, SESSION_COOKIE, verifySession } from '../lib/session.js';
+import { safeEqual } from '../lib/session.js';
 import { linksFor, type Links } from '../lib/links.js';
 
 /** Links (mídia/upload) adequados ao tipo de acesso desta requisição. */
@@ -29,10 +29,9 @@ export function allowedOrigins(ctx: AppContext): string[] {
 
 /**
  * Quem pode chegar ao backend:
- * - localhost (uso local): tudo, sem login;
+ * - localhost (uso local): tudo;
  * - qualquer origem: links de mídia assinados (/public/media, /direct/*) e retornos OAuth;
- * - a Function de proxy da Vercel (cabeçalho x-agendador-proxy com o segredo): /api,
- *   sujeita a login (sessionGuard);
+ * - a Function de proxy da Vercel (cabeçalho x-agendador-proxy com o segredo): /api;
  * - o resto: 403.
  */
 export function externalGuard(ctx: AppContext): RequestHandler {
@@ -55,21 +54,6 @@ export function externalGuard(ctx: AppContext): RequestHandler {
     }
     res.status(403).json({ error: 'Acesso externo não permitido a esta rota.' });
   };
-}
-
-const OPEN_REMOTE = new Set(['/auth/session', '/auth/login', '/auth/logout', '/health']);
-
-/** No acesso remoto, toda rota /api (exceto login e sessão) exige o cookie de sessão. */
-export function sessionGuard(ctx: AppContext): RequestHandler {
-  return (req, res, next) => {
-    if (res.locals.access !== 'remote' || OPEN_REMOTE.has(req.path)) return next();
-    if (isAuthenticated(ctx, req)) return next();
-    res.status(401).json({ error: 'Sessão expirada ou ausente. Faça login.', code: 'login_required' });
-  };
-}
-
-export function isAuthenticated(ctx: AppContext, req: Request): boolean {
-  return !!ctx.sessionKey && verifySession(ctx.sessionKey, readCookie(req.headers.cookie, SESSION_COOKIE), ctx.clock.now().getTime());
 }
 
 /** CORS só para as rotas /direct/* (upload e mídia assinados), liberado para APP_URL. */

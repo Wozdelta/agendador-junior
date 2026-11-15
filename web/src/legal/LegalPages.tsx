@@ -56,8 +56,8 @@ export function TermsPage() {
 
       <h2>2. Acesso</h2>
       <p>
-        A versão hospedada é protegida por senha e destinada ao uso do próprio responsável pelo app. Não há cadastro aberto ao público. Quem recebe a senha é responsável
-        por mantê-la em sigilo.
+        O app é destinado ao uso do próprio responsável e não tem cadastro de usuários nem tela de login: a interface abre direto para quem acessa o endereço. Não
+        compartilhe o endereço da interface com terceiros.
       </p>
 
       <h2>3. Contas conectadas</h2>
@@ -138,9 +138,8 @@ export function PrivacyPage() {
           histórico.
         </li>
         <li>
-          <strong>Acesso:</strong> um cookie técnico de sessão (HttpOnly) para manter o login da versão hospedada. Não usamos cookies de publicidade nem ferramentas de
-          analytics. Tentativas de login recusadas são registradas no log do servidor com o endereço IP. Os provedores de hospedagem podem registrar dados técnicos das
-          requisições (como IP, data e hora).
+          <strong>Acesso:</strong> o app não usa cookies, contas de usuário, ferramentas de analytics nem publicidade. Os provedores de hospedagem podem registrar
+          dados técnicos das requisições (como IP, data e hora).
         </li>
       </ul>
 
@@ -159,8 +158,8 @@ export function PrivacyPage() {
 
       <h2>5. Onde e como os dados ficam</h2>
       <p>
-        Os dados ficam no servidor do app: <Fill value={LEGAL.backendLocation} what="local onde o backend e os arquivos ficam" />. Os tokens são criptografados, o acesso
-        à versão hospedada exige senha e os links de mídia expiram.
+        Os dados ficam no servidor do app: <Fill value={LEGAL.backendLocation} what="local onde o backend e os arquivos ficam" />. Os tokens são criptografados, a comunicação
+        entre a interface hospedada e o servidor usa um segredo compartilhado e os links de mídia expiram.
       </p>
 
       <h2>6. Retenção</h2>

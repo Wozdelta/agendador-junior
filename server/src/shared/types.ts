@@ -184,16 +184,6 @@ export interface ConnectionDTO {
   needsReconnect?: boolean;
 }
 
-export interface SessionDTO {
-  /** true quando a interface é acessada remotamente e exige login. */
-  loginRequired: boolean;
-  authenticated: boolean;
-  /** Login remoto configurado no backend (APP_PASSWORD_HASH + TOKEN_ENCRYPTION_KEY). */
-  loginConfigured: boolean;
-  /** Uploads e mídia vão direto ao backend (PUBLIC_BASE_URL configurado). */
-  directLinks: boolean;
-}
-
 export interface SettingsDTO {
   mode: AppMode;
   timezone: string;
@@ -203,4 +193,8 @@ export interface SettingsDTO {
   publicBaseUrlConfigured: boolean;
   tiktokMode: 'manual' | 'inbox' | 'direct';
   graphVersion: string;
+  /** Interface aberta pela Vercel (via proxy) em vez de localhost. */
+  remoteAccess: boolean;
+  /** Uploads e mídia vão direto ao backend (PUBLIC_BASE_URL configurado). */
+  directLinks: boolean;
 }

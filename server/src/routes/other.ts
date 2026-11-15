@@ -93,7 +93,7 @@ export function publicRoutes(ctx: AppContext): Router {
 
 export function settingsRoutes(ctx: AppContext): Router {
   const r = Router();
-  const dto = (): SettingsDTO => {
+  const dto = (remote: boolean): SettingsDTO => {
     const tt = adapterFor(ctx, 'real', 'tiktok').account(ctx.modes.real).strategy;
     return {
       mode: ctx.settings.get().mode,
@@ -104,10 +104,12 @@ export function settingsRoutes(ctx: AppContext): Router {
       publicBaseUrlConfigured: !!ctx.config.publicBaseUrl,
       tiktokMode: tt === 'inbox' || tt === 'direct' ? tt : 'manual',
       graphVersion: ctx.config.meta.graphVersion,
+      remoteAccess: remote,
+      directLinks: !!ctx.config.publicBaseUrl,
     };
   };
   r.get('/settings', (_req, res) => {
-    res.json(dto());
+    res.json(dto(res.locals.access === 'remote'));
   });
   r.post('/settings/mode', ah(async (req, res) => {
     const mode = req.body?.mode;
@@ -117,7 +119,7 @@ export function settingsRoutes(ctx: AppContext): Router {
       s.mode = mode;
     });
     log.info(`Modo alterado para ${mode === 'demo' ? 'DEMONSTRAÇÃO' : 'REAL'}.`);
-    res.json(dto());
+    res.json(dto(res.locals.access === 'remote'));
   }));
   // Injeção de falhas: existe apenas no modo demonstração.
   r.post('/demo/faults', ah(async (req, res) => {

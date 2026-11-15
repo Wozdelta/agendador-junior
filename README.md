@@ -28,7 +28,6 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 | `npm run build:web` | Só a interface (é o comando usado pela Vercel) |
 | `npm start` | Produção local: um único processo em http://localhost:3001 servindo API **e** interface |
 | `npm run typecheck` | Verificação de tipos (backend, interface e Function de proxy) |
-| `npm run hash-password -w server` | Gera `APP_PASSWORD_HASH` para o login da versão hospedada |
 
 Em produção (`npm start`), ajuste `WEB_ORIGIN=http://localhost:3001` no `.env`.
 
@@ -67,7 +66,7 @@ Levar a fila inteira para a nuvem exigiria plano **Pro**, armazenamento de objet
 
 ```
 Navegador ──► Vercel: interface (web/dist) + /termos + /privacidade
-   │            └─ /api/* ──► Function api/proxy.ts ──► BACKEND_URL/api/*  (JSON, com segredo + login)
+   │            └─ /api/* ──► Function api/proxy.ts ──► BACKEND_URL/api/*  (JSON, com o segredo do proxy)
    │
    └──── vídeos e capas (PUT) / prévias (GET) ──► BACKEND /direct/* (links assinados e temporários)
 
@@ -76,20 +75,20 @@ Backend Node persistente (seu PC + túnel HTTPS com nome fixo, ou uma VPS):
    callbacks OAuth (/api/oauth/*/callback), links para a Meta (/public/media/*)
 ```
 
-**O que continua dependendo do servidor Node**: a fila inteira (envios, agendamentos nativos, Instagram às 12:00, janela de 29 dias do Facebook, confirmação de "Publicado", reconciliação após reinício), o armazenamento de vídeos, capas e tokens, a validação com `ffprobe`, os callbacks OAuth e os links temporários usados pela Meta. Sem o backend ligado, a interface na Vercel abre (inclusive `/`, `/termos` e `/privacidade`), mas o login mostra "Não foi possível falar com o backend".
+**O que continua dependendo do servidor Node**: a fila inteira (envios, agendamentos nativos, Instagram às 12:00, janela de 29 dias do Facebook, confirmação de "Publicado", reconciliação após reinício), o armazenamento de vídeos, capas e tokens, a validação com `ffprobe`, os callbacks OAuth e os links temporários usados pela Meta. Sem o backend ligado, a interface na Vercel abre (inclusive `/`, `/termos` e `/privacidade`), mas as telas mostram "Não foi possível falar com o backend".
 
 ### Segurança da versão hospedada
 
-- **Login**: senha única (hash scrypt em `APP_PASSWORD_HASH`), com até 5 tentativas a cada 10 min por IP. A sessão é um cookie `HttpOnly; Secure; SameSite=Lax` assinado com HMAC (chave derivada de `TOKEN_ENCRYPTION_KEY`) e validade de `SESSION_DAYS`. Como o navegador só fala com o domínio da Vercel, o cookie é primário (não depende de cookies de terceiros).
-- **Backend exposto pelo túnel**: só aceita `/api/*` com o cabeçalho `x-agendador-proxy` igual a `BACKEND_PROXY_SECRET` (colocado pela Function) **e** sessão válida. As únicas exceções são login e sessão. Abertos sem login: `/api/oauth/*/callback` (protegido por `state` de uso único) e `/direct/*` e `/public/media/*` (tokens HMAC por arquivo e com validade). O resto responde `403`.
+- **Sem login**: a interface hospedada abre direto, sem senha nem cookie de sessão. **Qualquer pessoa que souber o endereço da Vercel consegue usar o app**, inclusive conectar contas, enviar vídeos, agendar e cancelar publicações. Não divulgue o endereço. Se precisar restringir o acesso, use a proteção de implantação da própria Vercel (Deployment Protection), mas ela também bloqueia `/termos` e `/privacidade` para os revisores do TikTok.
+- **Backend exposto pelo túnel**: só aceita `/api/*` com o cabeçalho `x-agendador-proxy` igual a `BACKEND_PROXY_SECRET` (colocado pela Function). Escrita de outras origens é recusada (`Origin` precisa ser `APP_URL`). Abertos sem o segredo: `/api/oauth/*/callback` (protegido por `state` de uso único) e `/direct/*` e `/public/media/*` (tokens HMAC por arquivo e com validade). O resto responde `403`.
 - **Uploads e mídia**: o backend devolve à interface links `PUBLIC_BASE_URL/direct/upload/<token>` (validade de 3 h, um link por vídeo/capa) e `/direct/media/<token>` (6 h). O CORS fica liberado só para `APP_URL`. Os vídeos não passam pela Vercel.
-- **Segredos**: tokens OAuth, client secrets, `TOKEN_ENCRYPTION_KEY` e `APP_PASSWORD_HASH` ficam **só no backend**. Na Vercel ficam apenas `BACKEND_URL` e `BACKEND_PROXY_SECRET`, sem prefixo `VITE_`, lidas só pela Function. O bundle não contém segredos nem `localhost`.
-- **Uso local preservado**: pedidos de `localhost` continuam sem login, como antes.
+- **Segredos**: tokens OAuth, client secrets e `TOKEN_ENCRYPTION_KEY` (que criptografa os tokens das redes) ficam **só no backend**. Na Vercel ficam apenas `BACKEND_URL` e `BACKEND_PROXY_SECRET`, sem prefixo `VITE_`, lidas só pela Function. O bundle não contém segredos nem `localhost`.
+- **Uso local**: pedidos de `localhost` funcionam como antes.
 
 ### Passo a passo
 
 1. **Backend com HTTPS fixo.** Use um túnel com nome estável (por exemplo, Cloudflare Tunnel com domínio próprio, `cloudflared tunnel run`) apontando para `http://localhost:3001`, ou uma VPS com proxy HTTPS. Túneis "rápidos" mudam de endereço a cada execução e quebram os callbacks cadastrados.
-2. No `.env` do backend, defina `PUBLIC_BASE_URL` (endereço HTTPS do backend), `APP_URL` (endereço da Vercel), `BACKEND_PROXY_SECRET` e `APP_PASSWORD_HASH` (`npm run hash-password -w server`). Atualize também os callbacks (tabela da seção 7). Rode `npm run build && pm2 start server/dist/index.js --name agendador`.
+2. No `.env` do backend, defina `PUBLIC_BASE_URL` (endereço HTTPS do backend), `APP_URL` (endereço da Vercel), e `BACKEND_PROXY_SECRET`. Atualize também os callbacks (tabela da seção 7). Rode `npm run build && pm2 start server/dist/index.js --name agendador`.
 3. **Vercel → Add New Project → importe `Wozdelta/agendador-junior`**:
    - **Framework Preset**: `Vite`
    - **Root Directory**: `./` (raiz do repositório — a interface importa `server/src/shared` e a Function fica em `api/`)
@@ -250,13 +249,12 @@ Para automatizar:
 
 ## 8. Rotas da API
 
-Todas sob `/api` do backend (`http://localhost:3001/api` localmente; pela Vercel, `https://DOMINIO-DA-VERCEL/api/*` via proxy, com login). Respostas JSON com `Cache-Control: no-store`. As rotas marcadas com **(I)** aceitam `Idempotency-Key`.
+Todas sob `/api` do backend (`http://localhost:3001/api` localmente; pela Vercel, `https://DOMINIO-DA-VERCEL/api/*` via proxy). Respostas JSON com `Cache-Control: no-store`. As rotas marcadas com **(I)** aceitam `Idempotency-Key`.
 
 | Método e rota | Descrição |
 |---|---|
 | `GET /health` | Estado do backend e modo |
-| `GET /auth/session` · `POST /auth/login` `{password}` · `POST /auth/logout` | Sessão do acesso remoto (no localhost, sempre autenticado) |
-| `GET /settings` · `POST /settings/mode` `{mode, confirm:true}` | Parâmetros e troca explícita de modo |
+| `GET /settings` · `POST /settings/mode` `{mode, confirm:true}` | Parâmetros (inclui `remoteAccess` e `directLinks`) e troca explícita de modo |
 | `POST /demo/faults` `{platform, kind, times}` | Simular falhas (só no modo demonstração) |
 | `GET /batches?status=draft` | Rascunhos |
 | `POST /batches` `{startDate:"DD/MM/AAAA"}` **(I)** | Cria rascunho (valida data futura) |
@@ -295,7 +293,7 @@ Executado em 14/11/2026, no Windows 11, Node 24.21 e FFmpeg local:
 
 - `npm test` → **backend: 51 testes passando**, **frontend: 3 passando**. Os testes geram vídeos reais com o `ffmpeg` e usam **datas futuras calculadas a partir do relógio real**. Um relógio de teste só avança a fila.
 - `npm run build`, `npm start` e `npm run dev` foram executados. O fluxo também foi exercitado ao vivo por HTTP contra o servidor compilado.
-- **Versão hospedada** (`remote.test.ts`, sem Vercel real e sem provedores): login (senha errada, limite de tentativas, cookie forjado ou expirado), bloqueio de `/api` sem o segredo do proxy, uso local sem login, **lote de 5 vídeos montado pelo proxy** com uploads em links assinados (datas consecutivas às 12:00), CORS e links adulterados ou vencidos, início do OAuth (Google com `state`/PKCE/`access_type=offline` e callback HTTPS do backend; Meta v27.0 com escopos; TikTok sem configuração → erro claro), callback com `state` forjado, cancelamento e reuso de `state`. A **Function `api/proxy.ts` foi executada contra o backend real** (porta local), incluindo o repasse de cookie, o `302` do OAuth e o `503` sem `BACKEND_URL`.
+- **Versão hospedada** (`remote.test.ts`, sem Vercel real e sem provedores): interface acessa a API direto pelo proxy, sem senha nem cookie; rotas `/api/auth/*` removidas (404); bloqueio de `/api` sem o segredo do proxy ou com segredo errado; escrita de outra origem recusada; uso local; **lote de 5 vídeos montado pelo proxy** com uploads em links assinados (datas consecutivas às 12:00); CORS e links adulterados ou vencidos; início do OAuth (Google com `state`/PKCE/`access_type=offline` e callback HTTPS do backend; Meta v27.0 com escopos; TikTok sem configuração → erro claro); callback com `state` forjado, cancelamento e reuso de `state`. A **Function `api/proxy.ts` foi executada contra o backend real**, incluindo o `302` do OAuth e o `503` sem `BACKEND_URL`.
 - `npm run build:web` (comando da Vercel) foi testado com `vite preview`: `/`, `/termos`, `/privacidade` e rotas desconhecidas respondem `200` (fallback SPA) e o `favicon.svg` é servido como arquivo estático. As páginas legais foram renderizadas para conferir texto, rodapé e marcadores [PREENCHER]. **O deploy na Vercel não foi executado.**
 
 | Fluxo pedido | Resultado | Onde |
@@ -352,8 +350,7 @@ server/src/
   routes/     batches, other (agenda, conexões, mídia, configurações), middleware (idempotência, origem, acesso externo)
   shared/     tipos e limites usados também pela interface
 server/test/  time, limits, flow (fluxos completos no modo demo), adapters (conectores reais com fetch simulado), remote (versão hospedada e proxy)
-server/scripts/hash-password.ts
-web/src/      App (rotas públicas, login), components/ (NewBatch, VideoCard, DateField, Agenda, Connections, SettingsPage), legal/ (/termos, /privacidade e dados a preencher), lib/ (api, date)
+web/src/      App (rotas públicas e app), components/ (NewBatch, VideoCard, DateField, Agenda, Connections, SettingsPage), legal/ (/termos, /privacidade e dados a preencher), lib/ (api, date)
 api/          proxy.ts — Vercel Function que encaminha /api/* ao backend
 vercel.json   build, saída e rewrites da Vercel
 data/         criado em tempo de execução (fora do git): demo/ e real/

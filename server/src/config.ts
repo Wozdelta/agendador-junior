@@ -46,9 +46,6 @@ export interface Config {
   appUrl: string;
   /** Segredo compartilhado com a Function de proxy da Vercel (cabeçalho x-agendador-proxy). */
   proxySecret: string;
-  /** Hash scrypt da senha de acesso remoto (gere com: npm run hash-password -w server). */
-  appPasswordHash: string;
-  sessionDays: number;
   google: { clientId: string; clientSecret: string; redirectUri: string };
   meta: {
     appId: string;
@@ -94,8 +91,6 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     mediaLinkTtlMinutes: num('MEDIA_LINK_TTL_MINUTES', 120),
     appUrl: str('APP_URL').replace(/\/+$/, ''),
     proxySecret: str('BACKEND_PROXY_SECRET'),
-    appPasswordHash: str('APP_PASSWORD_HASH'),
-    sessionDays: num('SESSION_DAYS', 7),
     google: {
       clientId: str('GOOGLE_CLIENT_ID'),
       clientSecret: str('GOOGLE_CLIENT_SECRET'),

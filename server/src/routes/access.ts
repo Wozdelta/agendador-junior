@@ -3,60 +3,8 @@ import type { AppContext } from '../context.js';
 import { toBatchDTO } from '../domain/batches.js';
 import { AppError } from '../lib/errors.js';
 import { linksFor, readDirectToken } from '../lib/links.js';
-import { log } from '../lib/log.js';
-import { SESSION_COOKIE, signSession, verifyPassword } from '../lib/session.js';
-import type { SessionDTO } from '../shared/types.js';
 import { receiveCover, receiveVideo } from './batches.js';
-import { ah, isAuthenticated } from './middleware.js';
-
-function clientIp(req: { headers: Record<string, any>; socket: { remoteAddress?: string } }): string {
-  return String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || req.socket.remoteAddress || '?';
-}
-
-/** Login do acesso remoto (a interface na Vercel chega aqui pela Function de proxy). */
-export function authRoutes(ctx: AppContext): Router {
-  const r = Router();
-  const configured = () => !!(ctx.config.appPasswordHash && ctx.sessionKey);
-
-  r.get('/auth/session', (req, res) => {
-    const remote = res.locals.access === 'remote';
-    const body: SessionDTO = {
-      loginRequired: remote,
-      authenticated: !remote || isAuthenticated(ctx, req),
-      loginConfigured: configured(),
-      directLinks: !!ctx.config.publicBaseUrl,
-    };
-    res.json(body);
-  });
-
-  r.post('/auth/login', ah(async (req, res) => {
-    if (res.locals.access !== 'remote') {
-      res.json({ ok: true });
-      return;
-    }
-    if (!configured()) throw new AppError(503, 'Login remoto não configurado no backend (APP_PASSWORD_HASH e TOKEN_ENCRYPTION_KEY).');
-    const ip = clientIp(req);
-    const now = ctx.clock.now().getTime();
-    if (ctx.loginLimiter.blocked(ip, now)) throw new AppError(429, 'Muitas tentativas. Aguarde alguns minutos e tente de novo.');
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!password || !verifyPassword(password, ctx.config.appPasswordHash)) {
-      ctx.loginLimiter.fail(ip, now);
-      log.warn(`Login remoto recusado (${ip}).`);
-      throw new AppError(401, 'Senha incorreta.');
-    }
-    ctx.loginLimiter.reset(ip);
-    const maxAge = ctx.config.sessionDays * 86400;
-    const token = signSession(ctx.sessionKey!, now + maxAge * 1000);
-    res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`);
-    res.json({ ok: true });
-  }));
-
-  r.post('/auth/logout', (_req, res) => {
-    res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
-    res.json({ ok: true });
-  });
-  return r;
-}
+import { ah } from './middleware.js';
 
 /**
  * Rotas com link assinado e temporário, chamadas pelo navegador direto no

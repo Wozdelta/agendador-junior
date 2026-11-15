@@ -9,7 +9,7 @@ import { createFfprobe, type Prober } from './lib/media.js';
 import { systemClock, type Clock } from './lib/time.js';
 import type { FetchLike } from './lib/http.js';
 import { KeyedMutex } from './lib/mutex.js';
-import { deriveKey, LoginLimiter } from './lib/session.js';
+import { deriveKey } from './lib/session.js';
 import type { Batch, ConnectionsDoc, IdemRecord, MediaRecord, Task } from './domain/model.js';
 
 export interface DemoFault {
@@ -49,9 +49,6 @@ export interface AppContext {
   fetch: FetchLike;
   vault: TokenVault;
   linkSecret: Buffer;
-  /** Chave HMAC do cookie de sessão (acesso remoto). */
-  sessionKey: Buffer | null;
-  loginLimiter: LoginLimiter;
   bootId: string;
   settings: JsonDoc<{ mode: AppMode }>;
   modes: Record<AppMode, ModeContext>;
@@ -101,8 +98,6 @@ export async function createContext(opts: {
     vault: new TokenVault(config.tokenKey),
     // Derivada da chave mestra: links assinados continuam válidos após reiniciar o backend.
     linkSecret: config.tokenKey ? deriveKey(config.tokenKey, 'links-de-midia') : crypto.randomBytes(32),
-    sessionKey: config.tokenKey ? deriveKey(config.tokenKey, 'sessao-remota') : null,
-    loginLimiter: new LoginLimiter(),
     bootId: crypto.randomBytes(8).toString('hex'),
     settings,
     modes,

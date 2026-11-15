@@ -6,7 +6,6 @@ import type {
   ConnectionDTO,
   Platform,
   PlatformTexts,
-  SessionDTO,
   SettingsDTO,
   TaskDTO,
 } from '../../../server/src/shared/types';
@@ -39,7 +38,6 @@ async function call<T>(method: string, url: string, body?: unknown, opts: { idem
   }
   const text = await res.text();
   const data = text ? JSON.parse(text) : undefined;
-  if (res.status === 401 && data?.code === 'login_required') window.dispatchEvent(new Event('agj:login-required'));
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`, data?.details, data?.code);
   return data as T;
 }
@@ -54,9 +52,6 @@ export interface DraftAgendaRow {
 }
 
 export const api = {
-  session: () => call<SessionDTO>('GET', '/api/auth/session'),
-  login: (password: string) => call<{ ok: boolean }>('POST', '/api/auth/login', { password }),
-  logout: () => call<{ ok: boolean }>('POST', '/api/auth/logout', {}),
   settings: () => call<SettingsDTO>('GET', '/api/settings'),
   setMode: (mode: 'demo' | 'real') => call<SettingsDTO>('POST', '/api/settings/mode', { mode, confirm: true }),
   setFault: (platform: Platform, kind: string | null, times = 1) => call('POST', '/api/demo/faults', { platform, kind, times }),

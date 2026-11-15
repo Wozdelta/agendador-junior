@@ -21,7 +21,8 @@ const HOP_BY_HOP = new Set([
   'content-length',
   'content-encoding',
 ]);
-const FORWARD_REQUEST = ['accept', 'content-type', 'cookie', 'idempotency-key', 'origin', 'range', 'user-agent'];
+// Sem login no app: cookies não são repassados em nenhum sentido.
+const FORWARD_REQUEST = ['accept', 'content-type', 'idempotency-key', 'origin', 'range', 'user-agent'];
 
 async function handler(request: Request): Promise<Response> {
   const backend = (process.env.BACKEND_URL ?? '').replace(/\/+$/, '');
@@ -70,7 +71,6 @@ async function handler(request: Request): Promise<Response> {
   upstream.headers.forEach((v, k) => {
     if (!HOP_BY_HOP.has(k.toLowerCase()) && k.toLowerCase() !== 'set-cookie') out.set(k, v);
   });
-  for (const c of upstream.headers.getSetCookie?.() ?? []) out.append('set-cookie', c);
   out.set('Cache-Control', 'no-store');
   return new Response(upstream.body, { status: upstream.status, headers: out });
 }
