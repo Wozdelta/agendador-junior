@@ -172,6 +172,9 @@ export type TaskAction =
   | 'resolve_review';
 
 export interface ConnectionDTO {
+  schedulerConfigured?: boolean;
+  analytics?: { state: import('./analytics.js').DataState; missingScopes: string[]; lastSync?: string };
+  monetization?: 'permission_granted' | 'unavailable';
   canConnect?: boolean;
   /** Motivos acionáveis; nunca inclui valores de credenciais. */
   blockers?: string[];

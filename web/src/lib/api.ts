@@ -10,6 +10,7 @@ import type {
   TaskDTO,
 } from '../../../server/src/shared/types';
 import type { ManualEntry } from './manual-agenda';
+import type { AnalyticsDTO } from '../../../server/src/shared/analytics';
 
 export class ApiError extends Error {
   constructor(
@@ -62,6 +63,9 @@ export interface DraftAgendaRow {
 }
 
 export const api = {
+  analytics: (start?:string,end?:string) => call<AnalyticsDTO>('GET',`/api/analytics${start&&end?`?${new URLSearchParams({start,end})}`:''}`),
+  syncAnalytics: (platform:Platform,start:string,end:string) => call<{state:string;message?:string;retryAt?:string}>('POST',`/api/analytics/${platform}/sync`,{start,end}),
+  authorizeAnalytics: (platform:Platform,monetary=false) => call<{url:string}>('POST',`/api/connections/${platform}/start`,{returnTo:window.location.origin,purpose:'analytics',monetary}),
   importLegacy: (backup:unknown) => call<{ok:boolean;imported:Record<string,number>}>('POST','/api/migration/legacy',backup),
   session: () => call<{user:{id:string;email:string}|null}>('GET','/api/auth/session'),
   login: (email:string,password:string) => call<{user:{id:string;email:string}}>('POST','/api/auth/login',{email,password}),

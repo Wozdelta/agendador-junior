@@ -1,4 +1,7 @@
 import { storageUrl } from '../lib/supabase.js';
+import { cloudPublicationQueue } from '../lib/publication-execution.js';
+import { processPublications } from './publication.js';
+import { analyticsAuthUrl, exchangeAnalytics, connectionIdentity, missingScopes, MONETARY_SCOPE, grantedScopes } from '../analytics/auth.js';
 import { connectionBlockers } from '../lib/connection-readiness.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -16,7 +19,6 @@ import { youtubeAuthUrl, youtubeExchange } from '../platforms/youtube.js';
 import { PLATFORMS, type AppMode, type Platform, type SettingsDTO } from '../shared/types.js';
 import { ah, allowedOrigins, idempotent, linksOf } from './middleware.js';
 import { hasPersistence, hasMediaStorage, requireOAuth } from '../lib/capabilities.js';
-import { Worker } from '../queue/worker.js';
 
 export function taskRoutes(ctx: AppContext): Router {
   const r = Router();
@@ -43,11 +45,8 @@ export function taskRoutes(ctx: AppContext): Router {
 
   r.post('/tasks/process-native', ah(async (_req, res) => {
     requireOAuth(ctx);
-    const worker = new Worker(ctx);
-    await worker.recover();
-    const end = Date.now() + Math.min(ctx.config.tickBudgetMs, 240_000);
-    for (let i = 0; i < 30 && Date.now() < end; i++) if (!(await worker.tick())) break;
-    res.json({ ok: true, message: 'Ciclo concluído. Confira o status: apenas “Agendado na plataforma” confirma o agendamento nativo. Retome envios pendentes pelo botão; não há execução automática futura na Vercel.' });
+    await processPublications(ctx);
+    res.json({ ok: true, message: cloudPublicationQueue(ctx)?'Ciclo concluído. A fila na nuvem processa as tarefas autorizadas; confira os resultados por plataforma.':'Ciclo concluído. Confira o status: apenas “Agendado na plataforma” confirma o agendamento nativo. O executor periódico de publicação ainda não está configurado.' });
   }));
 
   const action = (name: string, fn: (id: string, body: any) => Promise<any>) =>
@@ -125,7 +124,7 @@ export function settingsRoutes(ctx: AppContext): Router {
       serverPersistence: hasPersistence(ctx),
       mediaPersistence: hasMediaStorage(ctx),
       oauthAvailable: hasPersistence(ctx) && ctx.vault.available,
-      backgroundWorker: false,
+      backgroundWorker: cloudPublicationQueue(ctx),
     };
   };
   r.get('/settings', (_req, res) => {
@@ -181,13 +180,28 @@ export function connectionRoutes(ctx: AppContext): Router {
           limitations.push('A autorização salva usa outra chave. Restaure a chave anterior ou reconecte a conta. Nenhum token foi apagado.');
         }
       }
-      if (ctx.config.runtime === 'vercel') limitations.push(p === 'youtube' || p === 'facebook'
-        ? 'Agendamento nativo é mantido quando confirmado pela plataforma. Prepare/retome o envio pelo botão na Agenda; não há fila automática futura.'
+      if (ctx.config.runtime === 'vercel' && p!=='tiktok') limitations.push(p === 'youtube' || p === 'facebook'
+        ? cloudPublicationQueue(ctx)?'O executor na nuvem prepara os envios nativos e acompanha os resultados. O agendamento nativo é confirmado pelo status da plataforma.':'Agendamento nativo é mantido quando confirmado pela plataforma. Prepare/retome o envio pelo botão na Agenda; o executor periódico ainda não está configurado.'
         : 'Nesta versão, publique manualmente na plataforma. Não há processo automático no horário planejado.');
       if (p === 'instagram' && stored?.tokensEnc && !c.connected) limitations.push('Selecione no cartão do Facebook a Página vinculada ao Instagram profissional.');
-      return { ...c, needsReconnect: tokenUnreadable || c.needsReconnect,
+      const identity=connectionIdentity(ctx,p);
+      if((p==='facebook'||p==='instagram')&&identity.page&&ctx.vault.available) {
+        try {ctx.vault.decrypt<string>(identity.page.tokenEnc,`facebook-page:${identity.page.id}`);}catch {tokenUnreadable=true;}
+      }
+      const analyticsMissing=missingScopes(ctx,p);
+      let expired=false;
+      if(stored?.tokensEnc && ctx.vault.available && !tokenUnreadable) {
+        const tokens=ctx.vault.decrypt<any>(stored.tokensEnc,p === 'instagram'?'facebook':p);
+        expired=!!tokens.expires_at && tokens.expires_at<Date.now() && !tokens.refresh_token;
+      }
+      const identified=mc.mode==='demo' || !!identity.id;
+      const connected=c.connected && identified && !tokenUnreadable && !expired && !(p==='instagram' && stored?.instagramDisconnected);
+      return { ...c, connected, accountId:mc.mode==='demo'?c.accountId:identity.id, accountName:identity.name ?? c.accountName, needsReconnect: tokenUnreadable || expired || c.needsReconnect,
+        analytics: {state:!connected ? 'disconnected' : stored?.analyticsNeedsReconnect ? 'expired' : analyticsMissing.length ? 'permission' : stored?.analyticsVerifiedAt ? 'available':'no_data',missingScopes:analyticsMissing,lastSync:stored?.analyticsVerifiedAt},
+        monetization: p==='youtube' && grantedScopes(ctx,p).includes(MONETARY_SCOPE) ? 'permission_granted':'unavailable',
         canConnect: blockers.length === 0, blockers,
-        capabilities: ctx.config.runtime === 'vercel' ? c.capabilities.filter(k => !['queue', 'queue_fallback', 'inbox', 'direct'].includes(k)) : c.capabilities,
+        schedulerConfigured: p==='tiktok'?cloudPublicationQueue(ctx):undefined,
+        capabilities: ctx.config.runtime === 'vercel' ? c.capabilities.filter(k => !['queue', 'queue_fallback', ...(p==='tiktok'?[]:['inbox','direct'])].includes(k)) : c.capabilities,
         notes: [...blockers, ...limitations, ...c.notes] };
     })));
   }));
@@ -205,24 +219,27 @@ export function connectionRoutes(ctx: AppContext): Router {
     const ret = String(req.method === 'POST' ? req.body?.returnTo ?? '' : req.query.return ?? '');
     const returnTo = allowedOrigins(ctx).includes(ret) ? ret : ctx.config.webOrigin;
     const nonce = crypto.randomBytes(24).toString('base64url');
-    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ ownerId: ctx.ownerId, nonce, platform: p, requestedPlatform: platform, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
+    const analytics=req.body?.purpose==='analytics' || req.query.purpose==='analytics';
+    const monetary=req.body?.monetary===true;
+    if(analytics && !connectionIdentity(ctx,platform).id) throw new AppError(409,'Conecte e selecione esta conta antes de autorizar Analytics.');
+    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ ownerId: ctx.ownerId, nonce, platform: p, requestedPlatform: platform, purpose:analytics?'analytics':'publication', verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
     let state: string;
     let url: string;
     if (platform === 'youtube') {
       if (!ctx.config.google.clientId || !ctx.config.google.clientSecret) throw new AppError(409, 'Configure GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET para conectar o YouTube.');
       const { verifier, challenge } = pkcePair();
       state = pack(platform, verifier);
-      url = youtubeAuthUrl(ctx, state, challenge);
+      url = analytics ? analyticsAuthUrl(ctx,platform,state,challenge,monetary):youtubeAuthUrl(ctx, state, challenge);
     } else if (platform === 'facebook' || platform === 'instagram') {
       if (!ctx.config.meta.appId || !ctx.config.meta.appSecret) throw new AppError(409, 'Configure META_APP_ID e META_APP_SECRET para conectar Facebook/Instagram.');
       state = pack('facebook');
-      url = metaAuthUrl(ctx, state);
+      url = analytics ? analyticsAuthUrl(ctx,platform,state):metaAuthUrl(ctx, state);
     } else if (platform === 'tiktok') {
       if (!ctx.config.tiktok.clientKey || !ctx.config.tiktok.clientSecret || !ctx.config.tiktok.redirectUri) {
         throw new AppError(409, 'Configure TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET e TIKTOK_REDIRECT_URI (HTTPS) no .env.');
       }
       state = pack(platform);
-      url = tiktokAuthUrl(ctx, state);
+      url = analytics ? analyticsAuthUrl(ctx,platform,state):tiktokAuthUrl(ctx, state);
     } else throw new AppError(404, 'Plataforma desconhecida.');
     if (req.method === 'POST') res.json({ url });
     else res.redirect(302, url);
@@ -232,7 +249,7 @@ export function connectionRoutes(ctx: AppContext): Router {
     requireOAuth(ctx);
     const platform = String(req.params.platform);
     const state = String(req.query.state ?? '');
-    let pending: { ownerId?: string; nonce: string; platform: string; requestedPlatform?: Platform; verifier?: string; createdAt: number; returnTo: string } | undefined;
+    let pending: { ownerId?: string; nonce: string; platform: string; requestedPlatform?: Platform; purpose?: string; verifier?: string; createdAt: number; returnTo: string } | undefined;
     try { pending = ctx.vault.decrypt(state, 'oauth-state'); } catch {}
     const back = (q: string) => res.redirect(302, `${pending?.returnTo ?? ctx.config.webOrigin}/#/conexoes?${q}`);
     if (!pending || pending.ownerId !== ctx.ownerId || pending.platform !== platform || Date.now() - pending.createdAt > OAUTH_TTL) {
@@ -252,7 +269,8 @@ export function connectionRoutes(ctx: AppContext): Router {
     if (!code) return back(`erro=${encodeURIComponent('A rede não retornou a autorização. Entre novamente para conectar a conta.')}`);
     try {
       const mc = ctx.modes.real;
-      if (platform === 'youtube') await youtubeExchange(ctx, mc, code, pending.verifier!);
+      if(pending.purpose==='analytics') await exchangeAnalytics(ctx,pending.requestedPlatform!,code,pending.verifier);
+      else if (platform === 'youtube') await youtubeExchange(ctx, mc, code, pending.verifier!);
       else if (platform === 'facebook') await metaExchange(ctx, mc, code);
       else if (platform === 'tiktok') await tiktokExchange(ctx, mc, code);
       back(`conectado=${platform}${pending.requestedPlatform === 'instagram' ? '&origem=instagram' : ''}`);
@@ -268,6 +286,8 @@ export function connectionRoutes(ctx: AppContext): Router {
     await mc.connections.mutate((d) => {
       if (!d.facebook?.pages?.some((p) => p.id === pageId)) throw new AppError(400, 'Página não autorizada.');
       d.facebook.selectedPageId = pageId;
+      d.facebook.analyticsVerifiedAt=undefined;
+      d.facebook.analyticsNeedsReconnect=false;
     });
     res.json(await adapterFor(ctx, 'real', 'facebook').connection(mc));
   }));
@@ -277,7 +297,8 @@ export function connectionRoutes(ctx: AppContext): Router {
     const key = p === 'instagram' ? 'facebook' : p;
     if (!['youtube', 'facebook', 'tiktok'].includes(key)) throw new AppError(404, 'Plataforma desconhecida.');
     await ctx.modes.real.connections.mutate((d) => {
-      delete (d as any)[key];
+      if(p==='instagram' && d.facebook) d.facebook.instagramDisconnected=true;
+      else delete (d as any)[key];
     });
     res.json({ ok: true });
   }));

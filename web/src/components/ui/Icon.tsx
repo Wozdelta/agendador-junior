@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 export type IconName =
+  | 'dashboard'
   | 'video'
   | 'calendar'
   | 'link'
@@ -27,6 +28,7 @@ export type IconName =
   | 'instagram'
   | 'tiktok';
 const paths: Record<IconName, React.ReactNode> = {
+  dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="11" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="18" width="7" height="3" rx="1"/></>,
   video: (
     <>
       <rect x="3" y="5" width="13" height="14" rx="3" />

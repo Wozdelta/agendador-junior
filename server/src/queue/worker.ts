@@ -1,6 +1,7 @@
 // Fila persistente no backend. Roda com a aba fechada; a cada inicialização
 // recupera tarefas interrompidas e reconcilia pelo ID remoto.
 import type { AppContext, ModeContext } from '../context.js';
+import { executableInCloud } from '../lib/publication-execution.js';
 import type { Task } from '../domain/model.js';
 import { AuthError, LateError, ManualReviewError, PermanentError, RetryableError, UnknownOutcomeError } from '../lib/errors.js';
 import { log } from '../lib/log.js';
@@ -68,7 +69,7 @@ export class Worker {
   }
 
   private eligible(t: Task): boolean {
-    return this.ctx.config.runtime !== 'vercel' || (t.mode === 'real' && ['youtube', 'facebook'].includes(t.platform) && t.remote.strategy === 'native' && !t.remote.queueFallback);
+    return this.ctx.config.runtime !== 'vercel' || executableInCloud(this.ctx,t);
   }
 
   /** Um ciclo: executa as tarefas vencidas respeitando a concorrência. Retorna quando todas terminam. */

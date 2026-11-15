@@ -24,8 +24,8 @@ export function spring(
     velocity: e * (-d * (a * c + b * s) - a * wd * s + b * wd * c),
   };
 }
-export function tabGeometry(width: number, index: number) {
-  const step = width / 4,
+export function tabGeometry(width: number, index: number, count = 4) {
+  const step = width / count,
     margin = Math.max(4, 6 * Math.min(1, width / 410));
   const pill = Math.min(step - margin * 2, (86 * width) / 410),
     center = step * (index + 0.5);

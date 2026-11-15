@@ -4,6 +4,8 @@ import { PLATFORM_LABEL, PLATFORMS } from '../../../server/src/shared/types';
 import { api } from '../lib/api';
 import { PLATFORM_HOME } from './ManualAgenda';
 import { Icon } from './ui/Icon';
+import { STATE_LABEL, type AnalyticsDTO } from '../../../server/src/shared/analytics';
+export const validConnection = (c: ConnectionDTO) => c.connected && !c.needsReconnect && !!c.accountId && !!c.accountName;
 const CAP_LABEL: Record<string, string> = {
   native_schedule: 'Agendamento nativo',
   cover_image: 'Capa personalizada',
@@ -22,6 +24,7 @@ const LOGIN_LABEL: Record<Platform, string> = {
   tiktok: 'Entrar com TikTok',
 };
 export function Connections({ settings }: { settings: SettingsDTO }) {
+  const [metrics,setMetrics]=useState<AnalyticsDTO|null>(null);
   const [list, setList] = useState<ConnectionDTO[]>([]),
     [error, setError] = useState<string | null>(null),
     [loading, setLoading] = useState(true);
@@ -36,6 +39,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
     setLoading(true);
     try {
       setList(await api.connections());
+      void api.analytics().then(setMetrics).catch(()=>{});
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -46,6 +50,11 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
     void load();
   }, []);
   const demo = settings.mode === 'demo';
+  const connectedCount=list.filter(validConnection).length;
+  const allConnected=list.length===4&&connectedCount===4;
+  const authorize=async(p:Platform)=>{
+    setBusy(p);try{const {url}=await api.authorizeAnalytics(p);window.location.assign(url);}catch(e:any){setCardErrors(old=>({...old,[p]:e.message}));}finally{setBusy(null);}
+  };
   const meta = list.find(c => c.platform === 'facebook');
   const returnedPlatform = origin === 'instagram' ? 'instagram' : flash;
   const verifiedConnection = list.find(c => c.platform === returnedPlatform && c.connected && !c.needsReconnect);
@@ -62,28 +71,34 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
     }
   };
   return (
-    <div className="connections-page">
+    <div className={`connections-page ${allConnected?'all-connected':'setup-connections'}`}>
       <div className="page-heading">
         <div>
           <span className="eyebrow">SUAS REDES, NO MESMO LUGAR</span>
           <h1>
             Conexões<span className="accent-dot">.</span>
           </h1>
-          <p>Entre nas suas redes e autorize o Agendador a conectar suas contas.</p>
+          <p>{allConnected?'Suas contas prontas. Acompanhe o desempenho e gerencie cada conexão.':'Conecte suas contas e autorize os recursos que deseja usar.'}</p>
         </div>
         <span className="context-badge">
           <Icon name="link" size={15} />
-          {list.filter((c) => c.connected && !c.needsReconnect).length} de 4 conectadas
+          {connectedCount} de 4 plataformas conectadas
         </span>
       </div>
       {demo && (
         <div className="alert demo">Modo demonstração: contas e publicações são simuladas.</div>
       )}
-      <div className="work-panel connection-login-guide">
+      <div className="work-panel connection-overview">
+        <strong>{allConnected?<span className={flash?'completion-check animate-check':'completion-check'}><Icon name="check" size={28}/></span>:`${connectedCount}/4`}</strong>
+        <span>{allConnected?'4 plataformas conectadas':`${connectedCount} de 4 plataformas conectadas`}<br /><small>Confira a conta e o destino de cada publicação.</small></span>
+        <a href="#/dashboard" className={allConnected?'button primary':'button'}>Abrir Dashboard<Icon name="arrow" size={16}/></a>
+        <button onClick={() => void load()} disabled={loading}>{loading ? 'Verificando…' : 'Atualizar conexões'}</button>
+      </div>
+      {!allConnected&&<div className="work-panel connection-login-guide">
         <strong>Conecte em três passos</strong>
         <p>Escolha uma rede, faça login na página oficial e permita o acesso. Depois, você volta para cá com a conta vinculada.</p>
         <p className="muted">Digite a senha da rede somente no site oficial. Para Instagram, entre pelo Facebook e selecione a Página vinculada ao perfil profissional.</p>
-      </div>
+      </div>}
       {flash && !loading && !error && !flashErr && verifiedConnection && (
         <div className="alert success" role="status">
           <Icon name="check" />
@@ -125,6 +140,11 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
               </section>
             ))
           : list.map((c) => {
+              const analytic=metrics?.platforms.find(p=>p.platform===c.platform);
+              const displayName=analytic?.report?.accountName ?? c.accountName;
+              const health=(c.analytics?.state==='expired'||c.analytics?.state==='permission')?c.analytics.state:analytic?.state ?? c.analytics?.state ?? 'no_data';
+              const needsAnalytics=c.connected&&(health==='permission'||health==='expired'||(c.analytics?.missingScopes.length??0)>0);
+              const accountValid=validConnection(c);
               const canConnect = c.canConnect ?? c.configured;
               const pageOptions = c.platform === 'instagram'
                 ? meta?.pages?.filter(page => page.instagram)
@@ -145,7 +165,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                 >
                   <div className="connection-top">
                     <span className={`connection-icon platform-avatar ${c.platform}`}>
-                      <Icon name={c.platform} size={27} />
+                      {analytic?.avatar?<img src={analytic.avatar} alt="" referrerPolicy="no-referrer"/>:<Icon name={c.platform} size={27} />}
                     </span>
                     <span
                       className={`badge ${c.connected && !c.needsReconnect ? 'st-published' : c.needsReconnect ? 'st-failed' : ''}`}
@@ -156,10 +176,10 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                   </div>
                   <h2>{PLATFORM_LABEL[c.platform]}</h2>
                   <p className="connection-description">
-                    {c.accountName ? (
+                    {displayName ? (
                       <>
                         <span className="account-label">CONTA VINCULADA</span>
-                        <strong>{c.accountName}</strong>
+                        <strong>{displayName}</strong>
                       </>
                     ) : c.platform === 'instagram' ? (
                       'Sua conta profissional, conectada pela Página do Facebook.'
@@ -169,6 +189,13 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                       'Seu conteúdo pronto para chegar à próxima audiência.'
                     )}
                   </p>
+                  <div className="connection-resource-status">
+                    <span>Analytics <strong>{STATE_LABEL[health]}</strong></span>
+                    <span>Publicação <strong>{accountValid?(c.capabilities.includes('native_schedule')?'Agendamento nativo':c.capabilities.includes('direct')?'Direct Post':c.capabilities.includes('inbox')?'Caixa de entrada':'Manual disponível'):'Conecte a conta'}</strong></span>
+                    {accountValid&&c.platform==='tiktok'&&c.schedulerConfigured===false&&(c.capabilities.includes('direct')||c.capabilities.includes('inbox'))&&<small>API autorizada. Configure o executor na nuvem para agendar os envios.</small>}
+                    <span>Monetização <strong>{analytic?.report?.metrics.revenue?.value!=null?'Estimativa disponível':c.monetization==='permission_granted'?'Permissão concedida; disponibilidade a verificar':'Sem dados confirmados'}</strong></span>
+                    <small>Última sincronização: {(analytic?.lastSuccess ?? c.analytics?.lastSync)?new Date((analytic?.lastSuccess ?? c.analytics?.lastSync)!).toLocaleString('pt-BR',{timeZone:'America/Sao_Paulo'}):'Ainda não sincronizada'}</small>
+                  </div>
                   {(c.platform === 'facebook' || c.platform === 'instagram') && !!pageOptions?.length && (
                     <div className="field">
                       <label htmlFor={pageField}>{c.platform === 'instagram' ? 'Página vinculada ao Instagram' : 'Página de destino'}</label>
@@ -235,18 +262,22 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                     {!demo && (
                       <button
                         className="primary"
-                        disabled={!canConnect || busy !== null}
+                        disabled={(!canConnect&&!accountValid) || busy !== null}
                         title={
                           !canConnect
                             ? 'Consulte os requisitos em “Sobre esta conexão”. A publicação manual está disponível.'
                             : undefined
                         }
-                        onClick={() => void connect(c.platform)}
+                        onClick={(event) => {
+                          if(accountValid){const details=event.currentTarget.closest('section')?.querySelector('details');if(details){details.open=true;details.scrollIntoView?.({block:'nearest',behavior:'smooth'});}}
+                          else void connect(c.platform);
+                        }}
                       >
                         <Icon name="link" size={16} />
-                        {busy === c.platform ? 'Abrindo login…' : c.connected ? 'Reconectar conta' : LOGIN_LABEL[c.platform]}
+                        {busy === c.platform ? 'Abrindo login…' : accountValid ? 'Gerenciar conta' : c.needsReconnect ? 'Reconectar' : LOGIN_LABEL[c.platform]}
                       </button>
                     )}
+                    {!demo&&needsAnalytics&&<button className="analytics-authorize" disabled={busy!==null} onClick={()=>void authorize(c.platform)}>{health==='expired'?'Reconectar Analytics':'Autorizar Analytics'}</button>}
                     <a
                       className="button"
                       href={PLATFORM_HOME[c.platform]}
@@ -280,12 +311,13 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                         </li>
                       )}
                     </ul>
-                    {!demo && c.connected && c.platform !== 'instagram' && (
+                    {!demo&&c.connected&&<button disabled={busy!==null} onClick={()=>void connect(c.platform)}>Reconectar conta</button>}
+                    {!demo && c.connected && (
                       <button
                         className="small danger"
                         disabled={busy === c.platform}
                         onClick={async () => {
-                          if (!confirm('Desconectar e apagar os tokens salvos?')) return;
+                          if (!confirm(c.platform==='facebook'?'Desconectar Facebook também interrompe a autorização compartilhada com Instagram. Continuar?':`Desconectar ${PLATFORM_LABEL[c.platform]}?`)) return;
                           setBusy(c.platform);
                           try {
                             await api.disconnect(c.platform);

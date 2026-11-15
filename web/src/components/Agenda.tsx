@@ -49,6 +49,7 @@ type Dialog =
 export function Agenda({ settings }: { settings: SettingsDTO }) {
   return (
     <>
+      <a className="button agenda-analytics" href="#/dashboard"><Icon name="dashboard" size={18} />Ver Dashboard</a>
       <ManualAgenda view="agenda" />
       {settings.serverPersistence && <ServerAgenda settings={settings} />}
     </>
@@ -120,7 +121,7 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
         <h2>Registros do servidor</h2>
         <p className="muted">
           {settings.backgroundWorker
-            ? 'A fila local processa enquanto o servidor estiver ligado.'
+            ? 'O executor na nuvem processa as tarefas autorizadas. O PC pode ficar desligado; confira o resultado de cada plataforma.'
             : 'Não há fila automática nesta versão. Prepare envios nativos pelo botão abaixo; só o status “Agendado na plataforma” confirma a publicação futura sem o app aberto. As demais redes são manuais.'}
         </p>
       </div>

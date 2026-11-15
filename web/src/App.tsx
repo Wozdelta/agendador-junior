@@ -1,3 +1,4 @@
+import { Analytics } from './components/Analytics';
 import { AuthGate } from './components/AuthGate';
 import { useCallback, useEffect, useState } from 'react';
 import type { SettingsDTO } from '../../server/src/shared/types';
@@ -14,8 +15,9 @@ import { BrandMark, Icon } from './components/ui/Icon';
 import { GlassEffects } from './components/ui/GlassEffects';
 import { MotionPreview } from './components/MotionPreview';
 
-type Route = 'novo' | 'agenda' | 'conexoes' | 'config' | 'motion';
+type Route = 'novo' | 'agenda' | 'conexoes' | 'config' | 'motion' | 'dashboard';
 const ROUTES: Array<{ id: Route; label: string }> = [
+  { id: 'dashboard', label: 'Dashboard' },
   { id: 'novo', label: 'Novo lote' },
   { id: 'agenda', label: 'Agenda' },
   { id: 'conexoes', label: 'Conexões' },
@@ -23,8 +25,9 @@ const ROUTES: Array<{ id: Route; label: string }> = [
 ];
 
 function readRoute(): Route {
-  const h = window.location.hash.replace(/^#\/?/, '').split('?')[0] as Route;
-  return h === 'motion' || ROUTES.some((r) => r.id === h) ? h : 'novo';
+  const h = window.location.hash.replace(/^#\/?/, '').split('?')[0];
+  if(h==='analytics')return 'dashboard';
+  return h === 'motion' || ROUTES.some((r) => r.id === h) ? h as Route : 'dashboard';
 }
 
 /** /termos e /privacidade não dependem do backend; o resto abre direto no app. */
@@ -36,7 +39,7 @@ export function App() {
 }
 
 function MainApp() {
-  const [uploadMode,setUploadMode]=useState(false);
+  const [uploadMode,setUploadMode]=useState(true);
   const [route, setRoute] = useState<Route>(readRoute);
   const [settings, setSettings] = useState<SettingsDTO | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
@@ -115,8 +118,13 @@ function MainApp() {
             {backendError} <button onClick={loadSettings}>Tentar de novo</button>
           </div>
         )}
-        {route==='novo'&&advanced&&<div className="row"><button aria-pressed={!uploadMode} onClick={()=>setUploadMode(false)}>Agenda manual ? somente nomes</button><button aria-pressed={uploadMode} onClick={()=>setUploadMode(true)}>Upload e agendamento nativo</button></div>}
-        {(!advanced || !uploadMode) && (
+        {route==='novo'&&advanced&&<section className="publication-mode" aria-label="Modo de publicação">
+          <div className="publication-mode-options"><button className={uploadMode?'active':''} aria-pressed={uploadMode} onClick={()=>setUploadMode(true)}><Icon name="upload" size={18}/><span>Publicar com arquivos<small>Vídeos, thumbnail e agendamento</small></span></button><button className={!uploadMode?'active':''} aria-pressed={!uploadMode} onClick={()=>setUploadMode(false)}><Icon name="calendar" size={18}/><span>Agenda manual<small>Organizar para publicar depois</small></span></button></div>
+          <p>{uploadMode?'Envie os arquivos e revise o envio de cada rede. Seus rascunhos manuais continuam disponíveis na opção ao lado.':'Neste modo são salvos somente os nomes e textos. Para enviar vídeo e thumbnail, escolha Publicar com arquivos.'}</p>
+        </section>}
+        {route==='novo'&&settings&&!advanced&&<div className="work-panel publication-availability"><h3>O envio de vídeos e thumbnails precisa de armazenamento</h3><p>As permissões conectam suas contas. Para guardar e enviar os arquivos, o armazenamento de mídia também precisa estar configurado no servidor.</p><a href="#/config" className="button">Ver configurações</a></div>}
+        {route==='novo'&&settingsLoading&&!settings&&<p role="status">Verificando envio de vídeos e capas…</p>}
+        {(!settingsLoading || !!settings) && (!advanced || !uploadMode) && (
           <div hidden={route !== 'novo'} className={route === 'novo' ? 'page-enter' : ''}>
             <ManualAgenda view="create" />
           </div>
@@ -159,6 +167,7 @@ function MainApp() {
             </div>
           )}
           {route === 'motion' && <MotionPreview />}
+          {route === 'dashboard' && <Analytics />}
         </div>
       </main>
       <PublicFooter />

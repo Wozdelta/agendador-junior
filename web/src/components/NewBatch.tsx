@@ -14,6 +14,7 @@ import { DateField } from './DateField';
 import { VideoCard, type UploadState } from './VideoCard';
 import { Icon } from './ui/Icon';
 import { useDialogFocus } from './ui/useDialogFocus';
+import { useSession } from './AuthGate';
 
 type Patch = {
   platforms?: Partial<Record<Platform, Partial<PlatformTexts>>>;
@@ -22,6 +23,9 @@ type Patch = {
 const UPLOAD_CONCURRENCY = 2;
 
 export function NewBatch({ settings }: { settings: SettingsDTO }) {
+  const owner = useSession()?.id ?? 'local';
+  const outboxKey = (batchId: string) => `agendador:upload-texts:${owner}:${batchId}`;
+  const durable = useRef<Record<string, Patch>>({});
   const [drafts, setDrafts] = useState<BatchDTO[]>([]);
   const [batch, setBatch] = useState<BatchDTO | null>(null);
   const [dateInput, setDateInput] = useState('');
@@ -43,6 +47,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const pending = useRef<Map<string, Patch>>(new Map());
   const timer = useRef<number | undefined>(undefined);
+  const inFlight = useRef<Promise<void> | null>(null);
   const batchRef = useRef<BatchDTO | null>(null);
   batchRef.current = batch;
   const creating = useRef<string | null>(null);
@@ -67,7 +72,18 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = (b: BatchDTO) => {
+    try {
+      durable.current = JSON.parse(window.localStorage.getItem(outboxKey(b.id)) ?? '{}');
+      pending.current = new Map(Object.entries(durable.current));
+      b = { ...b, items: b.items.map(it => {
+        const patch = durable.current[it.id];
+        return !patch ? it : { ...it, coverFrameMs: patch.coverFrameMs ?? it.coverFrameMs,
+          platforms: Object.fromEntries(PLATFORMS.map(p => [p, { ...it.platforms[p], ...patch.platforms?.[p] }])) as typeof it.platforms };
+      }) };
+    } catch { setError('Não foi possível recuperar alterações locais deste rascunho.'); }
+    batchRef.current = b;
     setBatch(b);
+    if (pending.current.size) timer.current = window.setTimeout(() => void flush().catch(() => {}), 600);
     setDateInput(b.startDate);
     setDateError(null);
     setDone(null);
@@ -76,27 +92,42 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   // ---------- gravação dos textos (debounce + envio garantido ao fechar a aba) ----------
   const flush = useCallback(async (keepalive = false) => {
     window.clearTimeout(timer.current);
+    if (inFlight.current) await inFlight.current;
     const b = batchRef.current;
     if (!b || pending.current.size === 0) return;
     const entries = [...pending.current.entries()];
     pending.current.clear();
+    const save = async () => {
     for (const [itemId, patch] of entries) {
       try {
         const nb = await api.patchItem(b.id, itemId, patch, keepalive);
+        if (!pending.current.has(itemId)) {
+          delete durable.current[itemId];
+          try { window.localStorage.setItem(outboxKey(b.id), JSON.stringify(durable.current)); } catch {}
+        }
         if (!keepalive)
           setBatch((cur) => (cur && cur.id === nb.id ? mergeKeepingTexts(cur, nb) : cur));
       } catch (e: any) {
+        const newer = pending.current.get(itemId);
+        const platforms = { ...patch.platforms };
+        for (const p of PLATFORMS) if (newer?.platforms?.[p]) platforms[p] = { ...platforms[p], ...newer.platforms[p] };
+        pending.current.set(itemId, { ...patch, ...newer, platforms });
         if (!keepalive) setError(`Não foi possível salvar o rascunho: ${e.message}`);
+        throw e;
       }
     }
-  }, []);
+    };
+    inFlight.current = save();
+    try { await inFlight.current; } finally { inFlight.current = null; }
+  }, [owner]);
 
   useEffect(() => {
-    const onHide = () => void flush(true);
+    const onHide = () => void flush(true).catch(() => {});
     const onVis = () => document.visibilityState === 'hidden' && onHide();
     window.addEventListener('pagehide', onHide);
     document.addEventListener('visibilitychange', onVis);
     return () => {
+      void flush(true).catch(() => {});
       window.removeEventListener('pagehide', onHide);
       document.removeEventListener('visibilitychange', onVis);
     };
@@ -108,8 +139,17 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
     for (const [p, v] of Object.entries(patch.platforms ?? {}))
       platforms[p as Platform] = { ...(platforms[p as Platform] ?? {}), ...v };
     pending.current.set(itemId, { ...cur, ...patch, platforms });
+    const saved = durable.current[itemId] ?? {};
+    const savedPlatforms = { ...saved.platforms };
+    for (const p of PLATFORMS) if (patch.platforms?.[p]) savedPlatforms[p] = { ...savedPlatforms[p], ...patch.platforms[p] };
+    durable.current[itemId] = { ...saved, ...patch, platforms: savedPlatforms };
+    try { if (batchRef.current) window.localStorage.setItem(outboxKey(batchRef.current.id), JSON.stringify(durable.current)); }
+    catch { setError('Não foi possível guardar a cópia local. Aguarde o salvamento no servidor antes de recarregar.'); }
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void flush(), 600);
+    setBatch(b => b ? { ...b, items: b.items.map(it => it.id !== itemId ? it : {
+      ...it, ...patch, platforms: Object.fromEntries(PLATFORMS.map(p => [p, { ...it.platforms[p], ...patch.platforms?.[p] }])) as typeof it.platforms,
+    }) } : b);
+    timer.current = window.setTimeout(() => void flush().catch(() => {}), 600);
   };
 
   // ---------- data inicial ----------
@@ -333,7 +373,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
             <span className="muted">Rascunhos salvos:</span>
             {drafts.map((d) => (
               <span key={d.id} className={batch?.id === d.id ? 'chip active' : 'chip'}>
-                <button className="link" onClick={() => open(d)}>
+                <button className="link" onClick={async () => { try { await flush(); open(await api.batch(d.id)); } catch {} }}>
                   {d.startDate} · {d.items.length} vídeo(s)
                 </button>
                 <button
@@ -348,7 +388,8 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
             {batch && (
               <button
                 className="small"
-                onClick={() => {
+                onClick={async () => {
+                  try { await flush(); } catch { return; }
                   setBatch(null);
                   setDateInput('');
                 }}
@@ -530,7 +571,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
                   ))}
                   <div className="actions-bar">
                     <button className="primary big" onClick={review} disabled={anyUploading}>
-                      {anyUploading ? 'Aguardando envios…' : 'Revisar e agendar'}
+                      {anyUploading ? 'Aguardando envios…' : 'Revisar publicação e agendar'}
                     </button>
                   </div>
                 </section>
@@ -678,12 +719,19 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
 
 function connLabel(c?: ConnectionDTO): string {
   if (!c) return '';
-  if (c.platform === 'tiktok' && c.capabilities.length === 1) return 'manual';
   if (c.needsReconnect) return 'reconectar';
+  if(!c.connected)return 'não conectado';
+  if(c.platform==='tiktok') {
+    const method=c.capabilities.includes('direct')?'Direct Post':c.capabilities.includes('inbox')?'Caixa de entrada':'Publicação manual';
+    return `${method}${method!=='Publicação manual'&&c.schedulerConfigured===false?' · agendamento pendente':''}`;
+  }
   return c.connected ? (c.accountName ?? 'conectado') : 'não conectado';
 }
 
 /** Junta a resposta do servidor sem perder textos que ainda estão sendo digitados. */
 function mergeKeepingTexts(cur: BatchDTO, next: BatchDTO): BatchDTO {
-  return next.id === cur.id ? next : cur;
+  return next.id === cur.id ? { ...next, items: next.items.map(it => {
+    const local = cur.items.find(x => x.id === it.id);
+    return local ? { ...it, platforms: local.platforms, coverFrameMs: local.coverFrameMs } : it;
+  }) } : cur;
 }

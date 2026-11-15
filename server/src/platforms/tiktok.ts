@@ -1,3 +1,5 @@
+import { tiktokFields } from './publication-fields.js';
+import { cloudPublicationQueue } from '../lib/publication-execution.js';
 import { openMedia } from '../lib/mediaio.js';
 // TikTok — Login Kit (Web) + Content Posting API (consultada em 14/11/2026).
 // Padrão pessoal: "Ação manual necessária" (copiar descrição + baixar vídeo).
@@ -101,7 +103,6 @@ export class TikTokAdapter implements PlatformAdapter {
   constructor(private ctx: AppContext) {}
 
   private mode(mc: ModeContext): 'manual' | 'inbox' | 'direct' {
-    if (this.ctx.config.runtime === 'vercel') return 'manual';
     const c = getConn(mc, 'tiktok');
     const cfg = this.ctx.config.tiktok;
     if (!c?.tokensEnc || c.needsReconnect) return 'manual';
@@ -130,6 +131,7 @@ export class TikTokAdapter implements PlatformAdapter {
       accountId: c?.accountId,
       capabilities: ['manual', ...(m !== 'manual' ? [m] : [])],
       notes: [
+        this.ctx.config.runtime==='vercel'&&m!=='manual' ? (cloudPublicationQueue(this.ctx)?'O executor na nuvem processa os envios autorizados. Direct Post publica; caixa de entrada exige conclusão no app.':'A publicação via API está autorizada, mas o agendamento depende de configurar o executor na nuvem. Não é necessário manter o PC ligado quando o executor estiver ativo.') : '',
         m === 'manual' ? 'Modo manual: no horário, copie a descrição, baixe o vídeo e publique pelo app do TikTok.' : '',
         m === 'inbox' ? 'Envio à caixa de entrada: o TikTok notifica você para finalizar a publicação no app (máx. 5 pendentes em 24 h).' : '',
         m === 'direct' ? 'Direct Post habilitado: escolha privacidade e confirme o consentimento em cada vídeo.' : '',
@@ -181,6 +183,7 @@ export class TikTokAdapter implements PlatformAdapter {
   async run(rt: TaskRuntime): Promise<void> {
     const t = rt.task;
     const strategy = t.remote.strategy ?? 'manual';
+    if(strategy!=='manual'&&getConn(rt.mc,'tiktok')?.accountId!==t.accountId)throw new ManualReviewError('A conta conectada do TikTok mudou. Revise o destino e confirme um novo envio.');
     if ((strategy === 'direct' && !this.ctx.config.tiktok.directPostApproved) || (strategy === 'inbox' && !this.ctx.config.tiktok.uploadApproved)) {
       throw new ManualReviewError('A permissão de envio do TikTok não está habilitada. Use o modo manual.');
     }
@@ -235,7 +238,7 @@ export class TikTokAdapter implements PlatformAdapter {
       strategy === 'direct'
         ? await this.api(rt, '/v2/post/publish/video/init/', {
             post_info: {
-              title: t.description,
+              ...tiktokFields(t),
               privacy_level: t.options.privacyLevel,
               disable_comment: !!t.options.disableComment || !!info?.comment_disabled,
               disable_duet: !!t.options.disableDuet || !!info?.duet_disabled,
@@ -315,6 +318,7 @@ export class TikTokAdapter implements PlatformAdapter {
 
   async reconcile(rt: TaskRuntime): Promise<void> {
     const t = rt.task;
+    if(t.remote.strategy!=='manual'&&getConn(rt.mc,'tiktok')?.accountId!==t.accountId)throw new ManualReviewError('A conta conectada do TikTok mudou. Confira o envio anterior antes de continuar.');
     if (t.remote.publishId) {
       let d: any;
       try {

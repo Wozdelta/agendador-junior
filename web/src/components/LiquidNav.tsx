@@ -12,6 +12,7 @@ import {
 } from '../lib/liquid-motion';
 
 export const NAV_ITEMS: { id: string; label: string; icon: IconName }[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'novo', label: 'Novo lote', icon: 'video' },
   { id: 'agenda', label: 'Agenda', icon: 'calendar' },
   { id: 'conexoes', label: 'Conexões', icon: 'link' },
@@ -28,6 +29,7 @@ export function LiquidNav({
   loop?: boolean;
   preview?: boolean;
 }) {
+  const items = preview ? NAV_ITEMS.filter(i => i.id !== 'dashboard') : NAV_ITEMS;
   const nav = useRef<HTMLElement>(null),
     touch = useRef<HTMLDivElement>(null);
   const shadowId = useId();
@@ -38,7 +40,7 @@ export function LiquidNav({
   });
   const selected = Math.max(
     0,
-    NAV_ITEMS.findIndex((i) => i.id === route),
+    items.findIndex((i) => i.id === route),
   );
   useEffect(() => {
     const el = nav.current!;
@@ -53,7 +55,7 @@ export function LiquidNav({
       if (width <= 0) return;
       if ((!loop || motion.matches) && touch.current) touch.current.style.opacity = '0';
       if (motion.matches) el.querySelectorAll('.nav-ripple').forEach((ripple) => ripple.remove());
-      const to = tabGeometry(width, selected);
+      const to = tabGeometry(width, selected, items.length);
       if (!state.current.initialized || motion.matches) {
         state.current = {
           left: { position: to.left, velocity: 0 },
@@ -70,7 +72,7 @@ export function LiquidNav({
     }
     function draw(now: number) {
       if (width <= 0) return;
-      const to = tabGeometry(width, selected),
+      const to = tabGeometry(width, selected, items.length),
         seconds = (now - start) / 1000;
       let active = selected;
       if (loop && !motion.matches) {
@@ -82,7 +84,7 @@ export function LiquidNav({
         if (touch.current) {
           touch.current.style.opacity = tap ? '1' : '0';
           if (tap) {
-            const x = tabGeometry(width, tap.index).center;
+            const x = tabGeometry(width, tap.index, items.length).center;
             touch.current.style.setProperty('--tap-x', `${x}px`);
             touch.current.style.setProperty('--tap-scale', `${tap.scale}`);
             touch.current.style.setProperty('--tap-opacity', `${tap.opacity}`);
@@ -108,7 +110,7 @@ export function LiquidNav({
       el.querySelectorAll<HTMLButtonElement>('.liquid-tab').forEach((button, i) => {
         const c = Math.max(
           0,
-          Math.min(1, 1 - Math.abs(center - tabGeometry(width, i).center) / ((80 * width) / 410)),
+          Math.min(1, 1 - Math.abs(center - tabGeometry(width, i, items.length).center) / ((80 * width) / 410)),
         );
         button.style.color = `rgb(${[140, 138, 168].map((channel) => Math.round(channel + (255 - channel) * c)).join(',')})`;
         if (preview) {
@@ -143,14 +145,16 @@ export function LiquidNav({
   return (
     <nav
       ref={nav}
+      style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
       className={`liquid-nav ${preview ? 'preview-nav' : ''}`}
       aria-label={preview ? 'Prévia da navegação' : 'Navegação principal'}
     >
       <div className="liquid-pill" aria-hidden="true" />
-      {NAV_ITEMS.map((item) => (
+      {items.map((item) => (
         <button
           key={item.id}
           className="liquid-tab"
+          data-route={item.id}
           data-selected={route === item.id}
           aria-current={route === item.id ? 'page' : undefined}
           onClick={() => onChange(item.id)}

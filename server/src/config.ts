@@ -56,6 +56,7 @@ export interface Config {
   mediaStorage: 'disk' | 'supabase';
   /** Tempo que uma execução da fila usa antes de parar de pegar tarefas novas (ms). */
   tickBudgetMs: number;
+  publicationSchedulerEnabled: boolean;
   /** Validade da trava de uma tarefa em execução (ms). */
   taskLeaseMs: number;
   google: { clientId: string; clientSecret: string; redirectUri: string };
@@ -111,6 +112,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     redis: { url: '', token: '', prefix: 'legacy' },
     mediaStorage: str('SUPABASE_URL') ? 'supabase' : 'disk',
     tickBudgetMs: num('TICK_BUDGET_SECONDS', vercel ? 240 : 3600) * 1000,
+    publicationSchedulerEnabled: bool('PUBLICATION_SCHEDULER_ENABLED'),
     taskLeaseMs: num('TASK_LEASE_MINUTES', vercel ? 6 : 30) * 60_000,
     google: {
       clientId: str('GOOGLE_CLIENT_ID'),

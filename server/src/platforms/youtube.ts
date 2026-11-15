@@ -1,3 +1,4 @@
+import { youtubeFields } from './publication-fields.js';
 import { openMedia, readMedia } from '../lib/mediaio.js';
 // YouTube Shorts — YouTube Data API v3 (consultada em 14/11/2026).
 // OAuth 2.0 para aplicativos de servidor web com acesso offline e PKCE.
@@ -210,7 +211,7 @@ export class YouTubeAdapter implements PlatformAdapter {
         'X-Upload-Content-Type': m.mime,
       },
       body: JSON.stringify({
-        snippet: { title: t.title, description: t.description, categoryId: '22' },
+        snippet: youtubeFields(t),
         status: {
           privacyStatus: 'private',
           publishAt: new Date(t.plannedAt).toISOString(),

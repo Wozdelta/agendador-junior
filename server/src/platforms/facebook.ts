@@ -1,3 +1,4 @@
+import { facebookFields } from './publication-fields.js';
 import { openMedia, readMedia } from '../lib/mediaio.js';
 // Facebook Reels — Reels Publishing API (Graph v27.0, consultada em 14/11/2026).
 // start -> upload em rupload.facebook.com -> status -> finish (SCHEDULED + scheduled_publish_time).
@@ -178,8 +179,7 @@ export class FacebookAdapter implements PlatformAdapter {
     const params: Record<string, any> = {
       upload_phase: 'finish',
       video_id: t.remoteId,
-      title: t.title || undefined,
-      description: t.description,
+      ...facebookFields(t),
       video_state: queueMode ? 'PUBLISHED' : 'SCHEDULED',
     };
     if (!queueMode) params.scheduled_publish_time = Math.floor(new Date(t.plannedAt).getTime() / 1000);

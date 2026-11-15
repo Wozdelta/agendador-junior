@@ -1,3 +1,4 @@
+import { publicationTexts, type PublicationTexts } from '../../../server/src/shared/publication';
 import { PLATFORMS, type Platform } from '../../../server/src/shared/types';
 import { isoToBr, isValidBrDate } from './date';
 
@@ -5,6 +6,8 @@ export const MANUAL_AGENDA_KEY = 'agendador-junior:agenda-manual:v1';
 export interface ManualEntry {
   id: string;
   batchId?: string;
+  textVersion?: number;
+  texts?: PublicationTexts;
   date: string;
   originalName: string;
   title: string;
@@ -37,7 +40,7 @@ export function readManualAgenda(storage: StorageLike): ManualEntry[] {
       'Agenda manual inválida. Preserve os dados deste navegador antes de tentar novamente.',
     );
   }
-  return rows;
+  return rows.map(r => ({ ...r, texts: publicationTexts(r), textVersion: 2 }));
 }
 export function saveManualAgenda(storage: StorageLike, rows: ManualEntry[]): void {
   storage.setItem(MANUAL_AGENDA_KEY, JSON.stringify(rows));
@@ -73,6 +76,11 @@ export function manualOps(before: ManualEntry[], after: ManualEntry[]) {
     const patch: Record<string, unknown> = {};
     for (const field of ['title', 'description'] as const)
       if (row[field] !== old[field]) patch[field] = row[field];
+    const oldTexts = publicationTexts(old), nextTexts = publicationTexts(row);
+    const texts = Object.fromEntries(PLATFORMS.map(p => [p, Object.fromEntries(
+      (['title', 'description'] as const).filter(f => oldTexts[p][f] !== nextTexts[p][f]).map(f => [f, nextTexts[p][f]])
+    )]).filter(([, fields]) => Object.keys(fields).length));
+    if (Object.keys(texts).length) { patch.texts = texts; patch.textVersion = 2; }
     const platforms = Object.fromEntries(
       Object.entries(row.platforms).filter(([p, v]) => v !== old.platforms[p as Platform]),
     );

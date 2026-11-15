@@ -1,0 +1,46 @@
+.publication-editor { margin-top: 22px; min-width: 0; }
+.publication-mode { margin:0 0 26px; }
+.publication-mode-options { display:flex; gap:10px; flex-wrap:wrap; }
+.publication-mode-options>button { display:flex; align-items:center; text-align:left; gap:12px; padding:14px 18px; border-radius:16px; border:1px solid #ffffff15; background:#ffffff03; }
+.publication-mode-options>button.active { border-color:#a68bff70; background:#a18cff15; color:#dfd5ff; }
+.publication-mode-options small { display:block; font-size:10px; color:#929cb5; margin-top:5px; }
+.publication-mode>p { color:#8f9bb5; font-size:11px; line-height:1.7; margin:12px 0 0; }
+.cover-upload-button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; width:100%; min-height:94px; border:1px dashed #ab95ff80; border-radius:14px; background:#a18cff0b; color:#d2c3ff; }
+.cover-upload-button small { font-size:10px; color:#909bb6; }
+.publication-availability { margin-bottom:22px; }
+@media (max-width: 700px) { .publication-mode-options { display:grid; grid-template-columns:1fr; }.publication-mode-options>button { width:100%; } }
+.editor-context { display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; padding: 14px 0; border-bottom: 1px solid #ffffff20; position: sticky; top: 12px; z-index: 2; background: #151923; }
+.editor-context strong { overflow-wrap: anywhere; }
+.editor-context span { color: #b3a5ff; }
+.publication-tabs { display: flex; gap: 7px; flex-wrap: wrap; margin: 16px 0; }
+.publication-tabs button { padding: 9px 12px; font-size: 12px; }
+.publication-tabs button[aria-selected=true] { background: #9b87ff; color: #131122; border-color: #b9aaff; }
+.publication-editor .field { display: block; margin: 18px 0; }
+.publication-editor input, .publication-editor textarea { width: 100%; margin-top: 8px; }
+.publication-editor details { padding: 12px 0; }
+.publication-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.publication-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.selected-files li[aria-current=true] { border-color: #a38cff; background: #9980ff16; }
+.analytics-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; margin: 24px 0; }
+.analytics-stats strong { display: block; font-size: 38px; margin-top: 14px; }
+.analytics-stats span { color: #a6adbf; }
+.analytics-table-wrap { overflow-x: auto; }
+.analytics-page .page-heading select { display: block; margin-top: 8px; }
+.connections-page .conn-grid { display: flex; flex-direction: column; gap: 16px; }
+.connections-page .conn { display: grid; grid-template-columns: minmax(140px, .7fr) minmax(180px, 1fr) minmax(220px, 1.2fr); gap: 12px 24px; min-height: 0; padding: 26px; border-radius: 22px; }
+.connections-page .connection-top { grid-column: 1; grid-row: 1 / 3; flex-direction: column; align-items: flex-start; gap: 14px; }
+.connections-page .conn h2 { grid-column: 2; margin: 0; align-self: end; }
+.connections-page .connection-description { grid-column: 2; margin: 0; min-height: 0; }
+.connections-page .connection-actions { grid-column: 3; grid-row: 1 / 3; align-self: center; margin: 0; flex-wrap: wrap; }
+.connections-page .connection-caps, .connections-page .conn > details, .connections-page .conn > .field, .connections-page .conn > .alert, .connections-page .connection-limit { grid-column: 2 / -1; }
+.connections-page .connection-caps { margin: 4px 0; }
+.connection-overview { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-bottom: 24px; }
+.connection-overview strong { font-size: 28px; color: #b5a4ff; }
+.connection-overview button { margin-left: auto; }
+@media(max-width: 850px) {
+  .connections-page .conn { grid-template-columns: 1fr 2fr; }
+  .connections-page .connection-actions { grid-column: 1 / -1; grid-row: auto; }
+  .connections-page .connection-caps, .connections-page .conn > details, .connections-page .conn > .field, .connections-page .conn > .alert, .connections-page .connection-limit { grid-column: 1 / -1; }
+  .analytics-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media(max-width: 700px) { .publication-editor input,.publication-editor textarea { font-size: 16px; } .liquid-tab span { font-size: 10px; } }

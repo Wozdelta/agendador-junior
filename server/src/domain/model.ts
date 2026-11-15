@@ -99,6 +99,12 @@ export interface IdemRecord {
 }
 
 export interface StoredConnection {
+  analyticsTokensEnc?: string;
+  analyticsScopes?: string[];
+  analyticsPages?: StoredConnection['pages'];
+  analyticsNeedsReconnect?: boolean;
+  analyticsVerifiedAt?: string;
+  instagramDisconnected?: boolean;
   tokensEnc?: string;
   accountId?: string;
   accountName?: string;

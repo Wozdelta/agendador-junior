@@ -1,3 +1,6 @@
+import { publicationTexts, type PublicationTexts } from '../../../server/src/shared/publication';
+import { validatePlatform } from '../../../server/src/shared/limits';
+import { PublicationEditor } from './PublicationEditor';
 import { useSession } from './AuthGate';
 import { api } from '../lib/api';
 import { manualOps } from '../lib/manual-agenda';
@@ -35,8 +38,16 @@ const PLATFORM_NAME: Record<Platform, string> = {
 const UPDATED = 'agendador-manual-updated';
 export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'all' }) {
   const cloud = !!useSession();
+  const editKey = `agendador:manual-text-edits:${useSession()?.id ?? 'local'}`;
+  const restoreEdits = (list: ManualEntry[]) => {
+    try {
+      const edits = JSON.parse(window.localStorage.getItem(editKey) ?? '{}');
+      return list.map(row => !edits[row.id] ? row : { ...row, textVersion: 2, texts: Object.fromEntries(PLATFORMS.map(p => [p, { ...publicationTexts(row)[p], ...edits[row.id][p] }])) as PublicationTexts });
+    } catch { return list; }
+  };
   const queue = useRef(Promise.resolve());
   const loadVersion = useRef(0);
+  const persistedRows = useRef<ManualEntry[] | null>(null);
   const batchIdentity = useRef(crypto.randomUUID());
   const titleIdentity = useRef(crypto.randomUUID());
   const [loading, setLoading] = useState(cloud);
@@ -51,7 +62,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
       };
     }
   });
-  const [rows, setRows] = useState<ManualEntry[]>(cloud ? [] : initial.rows),
+  const [rows, setRows] = useState<ManualEntry[]>(cloud ? [] : restoreEdits(initial.rows)),
     [error, setError] = useState(cloud ? '' : initial.error),
     [blocked, setBlocked] = useState(cloud || !!initial.error);
   const [dateInput, setDateInput] = useState(() => isoToBr(todayIsoSaoPaulo())),
@@ -60,6 +71,15 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
     [description, setDescription] = useState('');
   const [files, setFiles] = useState<{ id: string; name: string }[]>([]),
     [platforms, setPlatforms] = useState<Platform[]>([...PLATFORMS]);
+  const [selectedId, setSelectedId] = useState('');
+  const [itemTexts, setItemTexts] = useState<Record<string, PublicationTexts>>({});
+  const [draftReady, setDraftReady] = useState(false);
+  const draftKey = `agendador:publication-draft:${useSession()?.id ?? 'local'}`;
+  useEffect(() => {
+    try { const raw = window.localStorage.getItem(draftKey); if (raw) { const d = JSON.parse(raw); setFiles(d.files ?? []); setItemTexts(d.itemTexts ?? {}); setPlatforms(d.platforms ?? [...PLATFORMS]); setDateInput(d.dateInput ?? isoToBr(todayIsoSaoPaulo())); setTitle(d.title ?? ''); if (d.batchId) batchIdentity.current = d.batchId; if (d.titleId) titleIdentity.current = d.titleId; } } catch { setError('Não foi possível recuperar o rascunho.'); }
+    setDraftReady(true);
+  }, [draftKey]);
+  useEffect(() => { if (draftReady) { try { window.localStorage.setItem(draftKey, JSON.stringify({ files, itemTexts, platforms, dateInput, title, titleId: titleIdentity.current, batchId: batchIdentity.current })); } catch { setError('Não foi possível guardar o rascunho neste navegador.'); } } }, [files, itemTexts, platforms, dateInput, title, draftReady, draftKey]);
   const [info, setInfo] = useState(''),
     [over, setOver] = useState(false),
     [saving, setSaving] = useState(false);
@@ -76,7 +96,8 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
         .manual()
         .then(({ rows }) => {
           if (version !== loadVersion.current) return;
-          setRows(rows);
+          persistedRows.current = rows;
+          setRows(restoreEdits(rows));
           setError('');
           setBlocked(false);
         })
@@ -92,7 +113,9 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
       return;
     }
     try {
-      setRows(readManualAgenda(window.localStorage));
+      const loaded = readManualAgenda(window.localStorage);
+      persistedRows.current = loaded;
+      setRows(restoreEdits(loaded));
       setError('');
       setBlocked(false);
     } catch {
@@ -114,12 +137,15 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
     return () => window.clearTimeout(timer);
   }, [info]);
   const save = async (next: ManualEntry[]) => {
+    const changed = next.filter(row => JSON.stringify(row) !== JSON.stringify((persistedRows.current ?? initial.rows).find(x => x.id === row.id)));
+    const invalid = changed.flatMap(row => PLATFORMS.filter(p => row.platforms[p] !== undefined).flatMap(p => validatePlatform(p, { ...publicationTexts(row)[p], madeForKids: false }, undefined).filter(i => i.level === 'error').map(i => `${row.originalName}: ${i.message}`)));
+    if (invalid.length) { setError(invalid.join(' ')); return false; }
     if (cloud) {
       if (blocked) {
         setError('Recarregue a agenda antes de salvar.');
         return false;
       }
-      const ops = manualOps(rows, next);
+      const ops = manualOps(persistedRows.current ?? rows, next);
       let success = false;
       setSaving(true);
       ++loadVersion.current;
@@ -128,7 +154,8 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
           let result: { rows: ManualEntry[] } | undefined;
           for (let i = 0; i < ops.length; i += 100)
             result = await api.saveManual(ops.slice(i, i + 100));
-          if (result) setRows(result.rows);
+          if (result) { persistedRows.current = result.rows; setRows(result.rows); }
+          try { window.localStorage.removeItem(editKey); } catch {}
           setError('');
           success = true;
           window.dispatchEvent(new Event(UPDATED));
@@ -147,11 +174,13 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
       return false;
     }
     try {
-      if (JSON.stringify(readManualAgenda(window.localStorage)) !== JSON.stringify(rows)) {
+      if (JSON.stringify(readManualAgenda(window.localStorage)) !== JSON.stringify(persistedRows.current ?? initial.rows)) {
         setError('A agenda mudou em outra aba. Clique em Tentar de novo antes de salvar.');
         return false;
       }
       saveManualAgenda(window.localStorage, next);
+      try { window.localStorage.removeItem(editKey); } catch {}
+      persistedRows.current = next;
       setRows(next);
       setError('');
       window.dispatchEvent(new Event(UPDATED));
@@ -186,6 +215,8 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
   try {
     dates = manualDates(brToIso(dateInput), names.length);
   } catch {}
+  const activeFile = names.find(f => f.id === selectedId) ?? names[0];
+  const textsFor = (file: { id: string; name: string }) => itemTexts[file.id] ?? publicationTexts({ title: file.name.replace(/\.[^.]+$/, ''), description });
   const complete = (r: ManualEntry) => Object.values(r.platforms).every(Boolean);
   const completed = rows.filter(complete).length;
   const shown = [...rows]
@@ -279,6 +310,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
           <form
             id={formId}
             className="batch-form"
+            inert={saving}
             onSubmit={async (e) => {
               e.preventDefault();
               setInfo('');
@@ -295,6 +327,8 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
               }
               setSaving(true);
               try {
+                const invalid = names.flatMap(file => platforms.flatMap(p => validatePlatform(p, { ...textsFor(file)[p], madeForKids: false }, undefined).filter(i => i.level === 'error').map(i => `${file.name}: ${i.message}`)));
+                if (invalid.length) { setError(invalid.join(' ')); return; }
                 const batchId = batchIdentity.current;
                 const added: ManualEntry[] = names.map((file, i) => ({
                   batchId,
@@ -302,7 +336,9 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                   date: dates[i],
                   originalName: file.name,
                   title: title.trim() || file.name,
-                  description,
+                  description: '',
+                  textVersion: 2,
+                  texts: textsFor(file),
                   platforms: Object.fromEntries(platforms.map((p) => [p, false])),
                 }));
                 if (await save([...rows, ...added])) {
@@ -311,6 +347,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                   setTitle('');
                   setDescription('');
                   setFiles([]);
+                  setItemTexts({});
                   setInfo(
                     `${added.length} registro(s) salvo(s) ${cloud ? 'no Supabase' : 'neste navegador'}.`,
                   );
@@ -411,12 +448,10 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
               {files.length > 0 && (
                 <ol className="selected-files">
                   {files.map((file, index) => (
-                    <li key={file.id}>
+                    <li key={file.id} aria-current={activeFile?.id === file.id}>
                       <span className="file-number">{String(index + 1).padStart(2, '0')}</span>
                       <Icon name="video" size={17} />
-                      <span className="filename" title={file.name}>
-                        {file.name}
-                      </span>
+                      <button type="button" className="filename link" onClick={() => setSelectedId(file.id)}>{file.name}</button>
                       <div className="file-actions">
                         <button
                           type="button"
@@ -461,35 +496,9 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                   ))}
                 </ol>
               )}
-              <div className="field content-title">
-                <label htmlFor={`${formId}-title`}>
-                  Título<span className="counter">{title.length}/200</span>
-                </label>
-                <input
-                  id={`${formId}-title`}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  maxLength={200}
-                  placeholder="Dê um nome para este conteúdo"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor={`${formId}-description`}>
-                  Descrição<span className="optional-label">COMPARTILHADA</span>
-                </label>
-                <textarea
-                  id={`${formId}-description`}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  maxLength={10000}
-                  rows={4}
-                  placeholder="Sua legenda, contexto e hashtags…"
-                />
-                <span className="field-hint">
-                  O texto será usado nos registros de todas as redes selecionadas. Você pode
-                  ajustá-lo na Agenda.
-                </span>
-              </div>
+              {!files.length && <label className="field">Nome do vídeo<input aria-label="Nome do vídeo" value={title} onChange={e => setTitle(e.target.value)} placeholder="Ou crie um registro sem arquivo" /></label>}
+              {activeFile && <PublicationEditor key={activeFile.id} name={activeFile.name} platforms={platforms} texts={textsFor(activeFile)} onChange={(p, patch) => setItemTexts(current => { const base = current[activeFile.id] ?? textsFor(activeFile); return { ...current, [activeFile.id]: { ...base, [p]: { ...base[p], ...patch } } }; })} />}
+
             </section>
             <section className="work-panel">
               <div className="section-heading">
@@ -584,7 +593,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
               ) : (
                 <ol className="schedule-lines">
                   {names.map((file, i) => (
-                    <li key={file.id}>
+                    <li key={file.id} aria-current={activeFile?.id === file.id}>
                       <span className="timeline-dot" />
                       <div className="schedule-name">
                         <strong title={file.name}>{title.trim() || file.name}</strong>
@@ -774,36 +783,17 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                     <Icon name="chevron" size={16} />
                   </summary>
                   <div>
-                    <label>
-                      Descrição deste vídeo
-                      <textarea
-                        defaultValue={r.description}
-                        onBlur={(e) =>
-                          save(
-                            rows.map((x) =>
-                              x.id === r.id ? { ...x, description: e.target.value } : x,
-                            ),
-                          )
-                        }
-                      />
-                    </label>
+                    <PublicationEditor disabled={saving || blocked || loading} name={r.originalName} platforms={PLATFORMS.filter(p => r.platforms[p] !== undefined)} texts={publicationTexts(r)} onChange={(p, patch) => {
+                      try {
+                        const edits = JSON.parse(window.localStorage.getItem(editKey) ?? '{}');
+                        edits[r.id] = { ...edits[r.id], [p]: { ...edits[r.id]?.[p], ...patch } };
+                        window.localStorage.setItem(editKey, JSON.stringify(edits));
+                      } catch { setError('Não foi possível guardar as alterações locais. Salve os textos antes de sair.'); }
+                      setRows(current => current.map(x => x.id === r.id ? { ...x, textVersion: 2, texts: { ...publicationTexts(x), [p]: { ...publicationTexts(x)[p], ...patch } } } : x));
+                    }} />
+                    <p className="field-hint">Alterações recuperadas neste navegador. Use Salvar textos para atualizar a agenda{cloud ? ' no Supabase' : ''}.</p>
                     <div className="row">
-                      <button
-                        className="small"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(r.description);
-                            setInfo('Descrição copiada.');
-                          } catch {
-                            setError(
-                              'Selecione e copie o texto da descrição; não foi possível acessar a área de transferência.',
-                            );
-                          }
-                        }}
-                      >
-                        <Icon name="copy" size={15} />
-                        Copiar descrição
-                      </button>
+                      <button disabled={saving || blocked || loading} onClick={() => save(rows)}>Salvar textos</button>
                       <button
                         className="small danger"
                         onClick={() => {

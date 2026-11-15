@@ -108,6 +108,7 @@ export async function metaExchange(ctx: AppContext, mc: ModeContext, code: strin
       selectedPageId: pages.some((p: any) => p.id === prev) ? prev : pages.length === 1 ? pages[0].id : undefined,
       connectedAt: ctx.clock.now().toISOString(),
       needsReconnect: false,
+      instagramDisconnected: false,
     };
   });
 }
@@ -130,7 +131,7 @@ export function selectedPage(ctx: AppContext, mc: ModeContext): PageAccess {
     pageId: page.id,
     pageName: page.name,
     token: ctx.vault.decrypt<string>(page.tokenEnc, `facebook-page:${page.id}`),
-    instagram: page.instagram ?? null,
+    instagram: c.instagramDisconnected ? null : page.instagram ?? null,
   };
 }
 

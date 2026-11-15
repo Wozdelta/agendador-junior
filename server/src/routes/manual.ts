@@ -5,7 +5,9 @@ import { JsonCollection } from '../lib/store.js';
 import { SupabaseBackend } from '../lib/supabase.js';
 import { AppError } from '../lib/errors.js';
 import { ah } from './middleware.js';
-import { PLATFORMS } from '../shared/types.js';
+import { PLATFORMS, type Platform } from '../shared/types.js';
+import { publicationTexts, mergePublicationTexts, type PublicationTexts } from '../shared/publication.js';
+import { validatePlatform } from '../shared/limits.js';
 interface Entry {
   id: string;
   batchId?: string;
@@ -14,6 +16,8 @@ interface Entry {
   title: string;
   description: string;
   platforms: Record<string, boolean>;
+  texts?: PublicationTexts;
+  textVersion?: number;
 }
 function validate(value: any): Entry {
   for (const [field, max] of [
@@ -45,6 +49,13 @@ function validate(value: any): Entry {
     )
   )
     throw new AppError(400, 'Selecione plataformas válidas.');
+  if (value.texts !== undefined && (!value.texts || typeof value.texts !== 'object' || Array.isArray(value.texts) || Object.entries(value.texts).some(([p, t]: [string, any]) => !PLATFORMS.includes(p as Platform) || !t || typeof t !== 'object' || ['title', 'description'].some(f => t[f] !== undefined && typeof t[f] !== 'string'))))
+    throw new AppError(400, 'Textos por plataforma inválidos.');
+  const texts = publicationTexts(value);
+  for (const p of Object.keys(value.platforms) as Platform[]) {
+    const errors = validatePlatform(p, { ...texts[p], madeForKids: false }, undefined).filter(i => i.level === 'error');
+    if (errors.length) throw new AppError(400, errors.map(i => i.message).join(' '));
+  }
   return {
     id: value.id,
     batchId: value.batchId,
@@ -53,6 +64,8 @@ function validate(value: any): Entry {
     title: value.title,
     description: value.description,
     platforms: value.platforms,
+    texts,
+    textVersion: 2,
   };
 }
 export function manualRoutes(ctx: AppContext) {
@@ -65,7 +78,7 @@ export function manualRoutes(ctx: AppContext) {
     '/manual',
     ah(async (_req, res) => {
       const c = await collection().load();
-      res.json({ rows: c.all() });
+      res.json({ rows: c.all().map(row => ({ ...row, texts: publicationTexts(row), textVersion: 2 })) });
     }),
   );
   r.post(
@@ -88,11 +101,13 @@ export function manualRoutes(ctx: AppContext) {
             if (index < 0)
               throw new AppError(409, 'Registro alterado em outra sessão. Recarregue a agenda.');
             const patch = op.patch ?? {};
-            if (Object.keys(patch).some((k) => !['title', 'description', 'platforms'].includes(k)))
+            if (Object.keys(patch).some((k) => !['title', 'description', 'platforms', 'texts', 'textVersion'].includes(k)))
               throw new AppError(400, 'Alteração inválida.');
             rows[index] = validate({
               ...rows[index],
               ...patch,
+              texts: mergePublicationTexts(publicationTexts(rows[index]), patch.texts ?? {}),
+              textVersion: 2,
               platforms: { ...rows[index].platforms, ...patch.platforms },
             });
           } else throw new AppError(400, 'Operação inválida.');

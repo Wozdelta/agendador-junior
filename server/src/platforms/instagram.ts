@@ -1,3 +1,4 @@
+import { instagramFields } from './publication-fields.js';
 import { openMedia } from '../lib/mediaio.js';
 // Instagram Reels — Instagram API com Facebook Login (Graph v27.0, consultada em 14/11/2026).
 // Container media_type=REELS criado perto do horário, status_code até FINISHED e
@@ -32,6 +33,7 @@ export class InstagramAdapter implements PlatformAdapter {
 
   account(mc: ModeContext): AccountChoice {
     const c = getConn(mc, 'facebook');
+    if(c?.instagramDisconnected) throw new AppError(422,'Reconecte o perfil do Instagram em Conexões.');
     if (!c?.tokensEnc) throw new AppError(422, 'Conecte o Facebook (Instagram com Facebook Login) em "Conexões".');
     const page = c.pages?.find((p) => p.id === c.selectedPageId);
     if (!page) throw new AppError(422, 'Escolha a Página do Facebook vinculada ao Instagram em "Conexões".');
@@ -137,7 +139,7 @@ export class InstagramAdapter implements PlatformAdapter {
     const t = rt.task;
     const resumable = this.ctx.config.meta.igResumable;
     const cover = await this.coverUrl(rt);
-    const params: Record<string, any> = { media_type: 'REELS', caption: t.description };
+    const params: Record<string, any> = { media_type: 'REELS', ...instagramFields(t) };
     if (resumable) params.upload_type = 'resumable';
     else {
       const url = publicMediaUrl(this.ctx, rt.mc, rt.media());

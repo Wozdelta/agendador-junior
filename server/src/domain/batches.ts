@@ -1,4 +1,5 @@
 import { deleteMediaObject } from '../lib/mediaio.js';
+import { cloudPublicationQueue } from '../lib/publication-execution.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -187,7 +188,7 @@ export async function removeMediaFile(ctx: AppContext, mc: ModeContext, mediaId?
 }
 
 function accountFor(ctx: AppContext, mc: ModeContext, p: Platform): AccountChoice {
-  if (ctx.config.runtime === 'vercel' && (p === 'instagram' || p === 'tiktok')) return { accountId: 'manual', accountName: 'Publicação manual na plataforma', strategy: 'manual' };
+  if (ctx.config.runtime === 'vercel' && p === 'instagram') return { accountId: 'manual', accountName: 'Publicação manual na plataforma', strategy: 'manual' };
   return adapterFor(ctx, mc.mode, p).account(mc);
 }
 
@@ -242,8 +243,11 @@ export function summarize(ctx: AppContext, mc: ModeContext, b: Batch): BatchSumm
       }
       const acc = accounts[p];
       const strategy = acc && !('error' in acc) ? acc.strategy : undefined;
+      if(p==='tiktok'&&ctx.config.runtime==='vercel'&&(strategy==='direct'||strategy==='inbox')&&!cloudPublicationQueue(ctx)) {
+        issues.push({level:'error',platform:p,itemId:it.id,message:`Vídeo ${it.order} · TikTok: a API está autorizada, mas o executor de agendamento na nuvem não está configurado. Configure PUBLICATION_SCHEDULER_ENABLED e a chamada periódica do executor antes de agendar.`});
+      }
       if (p === 'facebook' && strategy === 'native' && new Date(it.scheduledAt).getTime() - now > 29 * 86400_000) {
-        issues.push({ level: 'info', platform: p, itemId: it.id, message: ctx.config.runtime === 'vercel' ? `Vídeo ${it.order} · Facebook: retome a preparação manualmente quando entrar na janela nativa ou publique diretamente na plataforma.` : `Vídeo ${it.order} · Facebook: fica na fila local até entrar na janela nativa.` });
+        issues.push({ level: 'info', platform: p, itemId: it.id, message: ctx.config.runtime === 'vercel' ? cloudPublicationQueue(ctx)?`Vídeo ${it.order} · Facebook: o executor retoma a preparação quando entrar na janela nativa.`:`Vídeo ${it.order} · Facebook: retome a preparação manualmente quando entrar na janela nativa ou publique diretamente na plataforma.` : `Vídeo ${it.order} · Facebook: fica na fila local até entrar na janela nativa.` });
       }
       if (p === 'tiktok' && strategy === 'direct' && (!it.platforms.tiktok.directPostConsent || !it.platforms.tiktok.privacyLevel)) {
         issues.push({ level: 'error', platform: p, itemId: it.id, message: `Vídeo ${it.order} · TikTok: escolha a privacidade e confirme o consentimento do Direct Post.` });

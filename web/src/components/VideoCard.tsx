@@ -234,7 +234,8 @@ export function VideoCard(props: Props) {
           {ready && <div className="upload-ok">✓ Vídeo enviado e verificado</div>}
 
           <section className="cover">
-            <h4>Capa do vídeo</h4>
+            <h4>Thumbnail / capa do vídeo</h4>
+            <p className="field-hint">Escolha uma imagem para este vídeo. A aplicação da capa depende do suporte de cada rede, indicado abaixo.</p>
             {item.cover ? (
               <div className="cover-preview">
                 <img src={item.cover.url} alt="Capa enviada" />
@@ -254,14 +255,15 @@ export function VideoCard(props: Props) {
                 </div>
               </div>
             ) : (
-              <button className="small" onClick={() => coverInput.current?.click()}>
-                Enviar imagem (opcional)
+              <button className="cover-upload-button" aria-label={`Adicionar thumbnail de ${item.originalName}`} onClick={() => coverInput.current?.click()}>
+                <span>+ Adicionar thumbnail</span><small>Imagem JPG ou PNG</small>
               </button>
             )}
             <input
               ref={coverInput}
               type="file"
               accept="image/jpeg,image/png"
+              aria-label={`Selecionar thumbnail de ${item.originalName}`}
               hidden
               onChange={(e) => e.target.files?.[0] && props.onCover(item.id, e.target.files[0])}
             />
@@ -364,6 +366,7 @@ export function VideoCard(props: Props) {
           )}
           {enabledPlatforms.includes(tab) && (
             <div className="ptab-panel" role="tabpanel">
+              <div className="editor-context"><strong>{item.originalName}</strong><span>{PLATFORM_LABEL[tab]}</span></div>
               <label className="switch">
                 <input
                   type="checkbox"
@@ -388,7 +391,7 @@ export function VideoCard(props: Props) {
                   )}
                   <div className="field">
                     <label>
-                      {tab === 'instagram' ? 'Legenda' : 'Descrição'}
+                      Descrição
                       <Counter text={texts[tab].description} platform={tab} field="description" />
                     </label>
                     <textarea
@@ -478,16 +481,16 @@ export function VideoCard(props: Props) {
                       </label>
                     </fieldset>
                   )}
-                  {tab === 'tiktok' && (
+                  {(
                     <button
                       className="small"
                       onClick={async () => {
-                        await navigator.clipboard.writeText(texts.tiktok.description);
+                        await navigator.clipboard.writeText(texts[tab].description);
                         setCopied(true);
                         setTimeout(() => setCopied(false), 1500);
                       }}
                     >
-                      {copied ? 'Copiado!' : 'Copiar descrição'}
+                      {copied ? 'Copiado!' : 'Copiar legenda'}
                     </button>
                   )}
                   <ul className="issues">
@@ -497,6 +500,7 @@ export function VideoCard(props: Props) {
                       </li>
                     ))}
                   </ul>
+                  <details><summary>Prévia · {PLATFORM_LABEL[tab]}</summary>{RULES[tab].title && <strong>{texts[tab].title}</strong>}<p className="publication-copy">{texts[tab].description}</p></details>
                 </>
               )}
             </div>

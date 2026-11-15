@@ -1,4 +1,5 @@
 import type { AppContext, ModeContext } from '../context.js';
+import { cloudPublicationQueue, executableInCloud } from '../lib/publication-execution.js';
 import { AppError } from '../lib/errors.js';
 import type { Links } from '../lib/links.js';
 import { computeSchedule, formatLocal, parseBrDate, parseTime } from '../lib/time.js';
@@ -81,6 +82,7 @@ function requireAction(t: Task, a: TaskAction) {
 }
 
 function manualFallback(ctx: AppContext, t: Task): boolean {
+  if(cloudPublicationQueue(ctx)&&executableInCloud(ctx,t))return false;
   return ctx.config.runtime === 'vercel' && !t.nativeSchedule && ['queued', 'processing', 'late', 'failed'].includes(t.state);
 }
 

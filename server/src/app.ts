@@ -1,4 +1,6 @@
 import { migrationRoutes } from './routes/migration.js';
+import { analyticsRoutes, analyticsCron } from './routes/analytics.js';
+import { publicationCron } from './routes/publication.js';
 import { authRoutes, authenticate } from './routes/auth.js';
 import { manualRoutes } from './routes/manual.js';
 import fs from 'node:fs';
@@ -23,6 +25,8 @@ export function createApp(ctx: AppContext, authorize: express.RequestHandler = a
   api.use(originGuard(ctx));
   api.use(express.json({ limit: '1mb' }));
   api.use(authRoutes(ctx));
+  api.use(analyticsCron(ctx));
+  api.use(publicationCron(ctx));
   api.use(authorize);
   api.use(manualRoutes(ctx));
   api.use(migrationRoutes(ctx));
@@ -35,6 +39,7 @@ export function createApp(ctx: AppContext, authorize: express.RequestHandler = a
   api.use(batchRoutes(ctx));
   api.use(taskRoutes(ctx));
   api.use(connectionRoutes(ctx));
+  api.use(analyticsRoutes(ctx));
   api.use(mediaRoutes(ctx));
   api.use((_req, res) => {
     res.status(404).json({ error: 'Rota não encontrada.', code: 'not_found' });
