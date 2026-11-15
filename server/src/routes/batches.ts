@@ -77,8 +77,8 @@ export function batchRoutes(ctx: AppContext): Router {
       }),
     );
     for (const it of b.items) {
-      await removeMediaFile(mc, it.mediaId);
-      await removeMediaFile(mc, it.coverId);
+      await removeMediaFile(ctx, mc, it.mediaId);
+      await removeMediaFile(ctx, mc, it.coverId);
     }
     res.json({ ok: true });
   }));
@@ -99,7 +99,7 @@ export function batchRoutes(ctx: AppContext): Router {
 
     r.put('/batches/:id/items/:itemId/video', ah(async (req, res) => {
     requireMediaStorage(ctx);
-    if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
+    if (ctx.config.mediaStorage === 'supabase') throw new AppError(400, 'Use o upload direto para o Storage.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveVideo(ctx, mc, String(req.params.id), String(req.params.itemId), req);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));
@@ -132,8 +132,8 @@ export function batchRoutes(ctx: AppContext): Router {
       removed = { mediaId: b.items[i].mediaId, coverId: b.items[i].coverId };
       b.items.splice(i, 1);
     });
-    await removeMediaFile(mc, removed.mediaId);
-    await removeMediaFile(mc, removed.coverId);
+    await removeMediaFile(ctx, mc, removed.mediaId);
+    await removeMediaFile(ctx, mc, removed.coverId);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));
   }));
 
@@ -154,7 +154,7 @@ export function batchRoutes(ctx: AppContext): Router {
 
     r.put('/batches/:id/items/:itemId/cover', ah(async (req, res) => {
     requireMediaStorage(ctx);
-    if (ctx.config.mediaStorage === 'blob') throw new AppError(400, 'Use o upload direto para Blob.', undefined, 'direct_upload_required');
+    if (ctx.config.mediaStorage === 'supabase') throw new AppError(400, 'Use o upload direto para o Storage.', undefined, 'direct_upload_required');
     const mc = mcOf();
     const b = await receiveCover(ctx, mc, String(req.params.id), String(req.params.itemId), req);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));
@@ -169,7 +169,7 @@ export function batchRoutes(ctx: AppContext): Router {
       previous = it.coverId;
       it.coverId = undefined;
     });
-    await removeMediaFile(mc, previous);
+    await removeMediaFile(ctx, mc, previous);
     res.json(toBatchDTO(mc, b, linksOf(ctx, res)));
   }));
 
@@ -257,8 +257,8 @@ export async function receiveVideo(ctx: AppContext, mc: ModeContext, id: string,
       it.uploadStatus = 'ready';
       it.uploadError = undefined;
     });
-    if (orphan) await removeMediaFile(mc, rec.id);
-    if (previous && previous !== rec.id) await removeMediaFile(mc, previous);
+    if (orphan) await removeMediaFile(ctx, mc, rec.id);
+    if (previous && previous !== rec.id) await removeMediaFile(ctx, mc, previous);
     return b;
 }
 
@@ -301,9 +301,9 @@ export async function receiveCover(ctx: AppContext, mc: ModeContext, id: string,
       previous = it.coverId;
       it.coverId = rec.id;
     }).catch(async (err) => {
-      await removeMediaFile(mc, rec.id);
+      await removeMediaFile(ctx, mc, rec.id);
       throw err;
     });
-    if (previous) await removeMediaFile(mc, previous);
+    if (previous) await removeMediaFile(ctx, mc, previous);
     return b;
 }

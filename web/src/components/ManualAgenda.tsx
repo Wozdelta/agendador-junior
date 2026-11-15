@@ -1,3 +1,6 @@
+import { useSession } from './AuthGate';
+import { api } from '../lib/api';
+import { manualOps } from '../lib/manual-agenda';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { PLATFORMS, PLATFORM_LABEL, type Platform } from '../../../server/src/shared/types';
 import { brToIso, isoToBr, todayIsoSaoPaulo } from '../lib/date';
@@ -31,6 +34,12 @@ const PLATFORM_NAME: Record<Platform, string> = {
 };
 const UPDATED = 'agendador-manual-updated';
 export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'all' }) {
+  const cloud = !!useSession();
+  const queue = useRef(Promise.resolve());
+  const loadVersion = useRef(0);
+  const batchIdentity = useRef(crypto.randomUUID());
+  const titleIdentity = useRef(crypto.randomUUID());
+  const [loading, setLoading] = useState(cloud);
   const [initial] = useState(() => {
     try {
       return { rows: readManualAgenda(window.localStorage), error: '' };
@@ -42,9 +51,9 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
       };
     }
   });
-  const [rows, setRows] = useState<ManualEntry[]>(initial.rows),
-    [error, setError] = useState(initial.error),
-    [blocked, setBlocked] = useState(!!initial.error);
+  const [rows, setRows] = useState<ManualEntry[]>(cloud ? [] : initial.rows),
+    [error, setError] = useState(cloud ? '' : initial.error),
+    [blocked, setBlocked] = useState(cloud || !!initial.error);
   const [dateInput, setDateInput] = useState(() => isoToBr(todayIsoSaoPaulo())),
     [dateError, setDateError] = useState('');
   const [title, setTitle] = useState(''),
@@ -60,6 +69,28 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
     dragDepth = useRef(0),
     formId = useId();
   const reload = () => {
+    if (cloud) {
+      const version = ++loadVersion.current;
+      setLoading(true);
+      void api
+        .manual()
+        .then(({ rows }) => {
+          if (version !== loadVersion.current) return;
+          setRows(rows);
+          setError('');
+          setBlocked(false);
+        })
+        .catch((e) => {
+          if (version === loadVersion.current) {
+            setError(e.message);
+            setBlocked(true);
+          }
+        })
+        .finally(() => {
+          if (version === loadVersion.current) setLoading(false);
+        });
+      return;
+    }
     try {
       setRows(readManualAgenda(window.localStorage));
       setError('');
@@ -69,6 +100,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
     }
   };
   useEffect(() => {
+    if (cloud) reload();
     window.addEventListener('storage', reload);
     window.addEventListener(UPDATED, reload);
     return () => {
@@ -81,7 +113,35 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
     const timer = window.setTimeout(() => setInfo(''), 6500);
     return () => window.clearTimeout(timer);
   }, [info]);
-  const save = (next: ManualEntry[]) => {
+  const save = async (next: ManualEntry[]) => {
+    if (cloud) {
+      if (blocked) {
+        setError('Recarregue a agenda antes de salvar.');
+        return false;
+      }
+      const ops = manualOps(rows, next);
+      let success = false;
+      setSaving(true);
+      ++loadVersion.current;
+      const task = queue.current.then(async () => {
+        try {
+          let result: { rows: ManualEntry[] } | undefined;
+          for (let i = 0; i < ops.length; i += 100)
+            result = await api.saveManual(ops.slice(i, i + 100));
+          if (result) setRows(result.rows);
+          setError('');
+          success = true;
+          window.dispatchEvent(new Event(UPDATED));
+        } catch (e: any) {
+          setError(e.message);
+        } finally {
+          setSaving(false);
+        }
+      });
+      queue.current = task.catch(() => {});
+      await task;
+      return success;
+    }
     if (blocked) {
       setError(initial.error || 'O armazenamento deste navegador está bloqueado. Tente de novo.');
       return false;
@@ -120,7 +180,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
   const names = files.length
     ? files
     : title.trim()
-      ? [{ id: 'draft-title', name: title.trim() }]
+      ? [{ id: titleIdentity.current, name: title.trim() }]
       : [];
   let dates: string[] = [];
   try {
@@ -167,6 +227,35 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
           Agenda manual
         </span>
       </div>
+      {loading && <p role="status">Carregando agenda do Supabase…</p>}
+      {cloud && initial.rows.length > 0 && (
+        <div className="work-panel">
+          <p>
+            Há {initial.rows.length} registro(s) antigo(s) neste navegador. A cópia local será
+            preservada.
+          </p>
+          <button
+            disabled={loading || saving || blocked}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                for (let i = 0; i < initial.rows.length; i += 100)
+                  await api.saveManual(
+                    initial.rows.slice(i, i + 100).map((value) => ({ type: 'insert', value })),
+                  );
+                setInfo('Importação concluída. IDs repetidos foram ignorados.');
+                reload();
+              } catch (e: any) {
+                setError(e.message);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            Importar registros antigos sem duplicar
+          </button>
+        </div>
+      )}
       {error && (
         <div className="alert error" role="alert">
           <Icon name="info" />
@@ -190,7 +279,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
           <form
             id={formId}
             className="batch-form"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
               setInfo('');
               setDateError('');
@@ -206,19 +295,25 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
               }
               setSaving(true);
               try {
+                const batchId = batchIdentity.current;
                 const added: ManualEntry[] = names.map((file, i) => ({
-                  id: crypto.randomUUID(),
+                  batchId,
+                  id: file.id,
                   date: dates[i],
                   originalName: file.name,
                   title: title.trim() || file.name,
                   description,
                   platforms: Object.fromEntries(platforms.map((p) => [p, false])),
                 }));
-                if (save([...rows, ...added])) {
+                if (await save([...rows, ...added])) {
+                  batchIdentity.current = crypto.randomUUID();
+                  titleIdentity.current = crypto.randomUUID();
                   setTitle('');
                   setDescription('');
                   setFiles([]);
-                  setInfo(`${added.length} registro(s) salvo(s) na agenda deste navegador.`);
+                  setInfo(
+                    `${added.length} registro(s) salvo(s) ${cloud ? 'no Supabase' : 'neste navegador'}.`,
+                  );
                 }
               } catch (err) {
                 setError(
@@ -505,14 +600,21 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
               )}
             </div>
             <div className="preview-save">
-              <button className="primary save-batch" type="submit" form={formId} disabled={saving}>
+              <button
+                className="primary save-batch"
+                type="submit"
+                form={formId}
+                disabled={saving || blocked || loading}
+              >
                 <Icon name={saving ? 'clock' : 'calendar'} />
                 <span>{saving ? 'Salvando…' : 'Salvar na agenda manual'}</span>
                 <Icon name="arrow" size={17} />
               </button>
               <p>
                 <Icon name="shield" size={13} />
-                Registros salvos apenas neste navegador.
+                {cloud
+                  ? 'Registros salvos na sua conta, no Supabase.'
+                  : 'Registros salvos apenas neste navegador.'}
               </p>
               <details className="local-details">
                 <summary>
@@ -520,10 +622,12 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                   <Icon name="chevron" size={14} />
                 </summary>
                 <p>
-                  Os registros ficam apenas neste navegador. Vídeos e capas não são enviados nem
-                  guardados aqui. Não há publicação automática, lembrete em segundo plano ou
-                  sincronização entre dispositivos. Guarde seus arquivos e exporte uma cópia da
-                  agenda.
+                  {cloud
+                    ? 'Os registros ficam na sua conta, no Supabase.'
+                    : 'Os registros ficam apenas neste navegador.'}{' '}
+                  Vídeos e capas não são enviados nem guardados aqui. Não há publicação automática,
+                  lembrete em segundo plano ou sincronização entre dispositivos. Guarde seus
+                  arquivos e exporte uma cópia da agenda.
                 </p>
               </details>
             </div>
@@ -650,6 +754,7 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                         <Icon name="arrow" size={16} style={{ transform: 'rotate(-40deg)' }} />
                       </a>
                       <button
+                        disabled={saving || blocked || loading}
                         className={`completion-button ${r.platforms[p] ? 'is-done' : ''}`}
                         aria-label={`${r.platforms[p] ? 'Marcar pendente' : 'Registrar conclusão'} em ${PLATFORM_NAME[p]} para ${r.title}`}
                         title={r.platforms[p] ? 'Marcar pendente' : 'Registrar conclusão'}
@@ -672,8 +777,8 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
                     <label>
                       Descrição deste vídeo
                       <textarea
-                        value={r.description}
-                        onChange={(e) =>
+                        defaultValue={r.description}
+                        onBlur={(e) =>
                           save(
                             rows.map((x) =>
                               x.id === r.id ? { ...x, description: e.target.value } : x,
@@ -717,7 +822,10 @@ export function ManualAgenda({ view = 'all' }: { view?: 'create' | 'agenda' | 'a
           ))}
           <p className="agenda-local-note">
             <Icon name="shield" size={14} />
-            Esta agenda fica neste navegador. Exporte os registros para manter uma cópia.
+            {cloud
+              ? 'Esta agenda fica na sua conta, no Supabase.'
+              : 'Esta agenda fica neste navegador.'}{' '}
+            Exporte os registros para manter uma cópia.
           </p>
         </section>
       )}

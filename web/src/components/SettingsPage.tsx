@@ -19,6 +19,7 @@ export function SettingsPage({
   const [error, setError] = useState<string | null>(null),
     [info, setInfo] = useState<string | null>(null),
     [busy, setBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [fp, setFp] = useState<Platform>('instagram'),
     [fk, setFk] = useState('fail');
   const demo = settings.mode === 'demo';
@@ -119,7 +120,7 @@ export function SettingsPage({
           <div className="setting-status">
             <div>
               <strong>Agenda manual</strong>
-              <span>Registros guardados apenas neste navegador.</span>
+              <span>Registros salvos na sua conta, no Supabase.</span>
             </div>
             <span className="badge st-published">
               <Icon name="check" size={12} />
@@ -258,6 +259,51 @@ export function SettingsPage({
             Gerenciar conexões
             <Icon name="arrow" size={15} />
           </a>
+        </section>
+        <section className="work-panel">
+          <h2>Importar backup do servidor anterior</h2>
+          {importError && (
+            <p role="alert" className="alert error">
+              {importError} Selecione o arquivo novamente para tentar.
+            </p>
+          )}
+          <p className="muted">
+            Para lotes e conexões de um backend antigo. IDs existentes são preservados. Tokens devem
+            estar criptografados com a mesma chave. Arquivos de vídeo não são transferidos.
+          </p>
+          <label>
+            Backup JSON (até 900 KB)
+            <input
+              type="file"
+              accept="application/json,.json"
+              disabled={busy}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                if (file.size > 900000) {
+                  setImportError('Divida o backup em arquivos de até 900 KB.');
+                  return;
+                }
+                setBusy(true);
+                setImportError(null);
+                try {
+                  const result = await api.importLegacy(JSON.parse(await file.text()));
+                  setInfo(
+                    `Backup importado: ${Object.values(result.imported).reduce((a, b) => a + b, 0)} registro(s) novo(s). IDs existentes foram ignorados.`,
+                  );
+                } catch (error: any) {
+                  setImportError(error.message);
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            />
+          </label>
+          <p className="muted">
+            O formato do backup está documentado em supabase/README.md. Importe apenas sua cópia
+            confiável.
+          </p>
         </section>
       </div>
     </div>

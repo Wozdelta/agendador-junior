@@ -1,8 +1,8 @@
 import type { AppContext } from '../context.js';
 import { AppError } from './errors.js';
 
-export const hasPersistence = (ctx: AppContext) => ctx.config.runtime !== 'vercel' || ctx.config.storage === 'redis';
-export const hasMediaStorage = (ctx: AppContext) => ctx.config.runtime !== 'vercel' || ctx.config.mediaStorage === 'blob';
+export const hasPersistence = (ctx: AppContext) => ctx.config.runtime !== 'vercel' || ['redis', 'supabase'].includes(ctx.config.storage);
+export const hasMediaStorage = (ctx: AppContext) => ctx.config.runtime !== 'vercel' || ctx.config.mediaStorage === 'supabase';
 export function requirePersistence(ctx: AppContext): void {
   if (!hasPersistence(ctx)) throw new AppError(409, 'Esta ação guarda dados no servidor e precisa de armazenamento persistente. A agenda manual continua disponível neste navegador.', undefined, 'persistence_required');
 }

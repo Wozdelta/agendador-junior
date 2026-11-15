@@ -51,7 +51,7 @@ describe('API na Vercel sem proxy', () => {
     expect(auth.searchParams.get('scope')).not.toContain('video.upload');
     const state = auth.searchParams.get('state')!;
     const c2 = await createContext({ config: e.ctx.config });
-    const second = request(createApp(c2));
+    const second = request(createApp(c2,(_req,_res,next)=>{c2.ownerId=e.ctx.ownerId;next();}));
     const cb = `/api/oauth/tiktok/callback?state=${encodeURIComponent(state)}&error=access_denied`;
     const back = await second.get(cb).expect(302);
     expect(back.headers.location).toContain('erro=access_denied');

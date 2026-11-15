@@ -20,8 +20,8 @@ it('renderiza a agenda manual e estados separados sem API ou variáveis de ambie
 it('Agenda abre com alternativa manual mesmo antes de a API responder', () => {
   vi.stubGlobal('window', { localStorage: { getItem: () => null }, location: { pathname: '/', hash: '#/agenda' } });
   const html = renderToStaticMarkup(<App />);
-  expect(html).toContain('Agenda manual');
-  expect(html).toContain('Salvar na agenda manual');
+  expect(html).toContain('Verificando');
+  expect(html).not.toContain('Salvar na agenda manual');
 });
 it('falha no armazenamento do navegador mostra erro e botão Tentar de novo', () => {
   vi.stubGlobal('window', { localStorage: { getItem: () => { throw new Error('Storage bloqueado'); } } });

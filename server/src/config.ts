@@ -46,12 +46,13 @@ export interface Config {
   appUrl: string;
   /** local = Node no seu computador; vercel = Vercel Functions (detectado por VERCEL=1). */
   runtime: 'local' | 'vercel';
-  /** Redis é opcional; sem ele a Vercel não persiste estado no servidor. */
-  storage: 'file' | 'redis';
+  /** Supabase em producao; tipos file/redis restritos a adaptadores legados e testes. */
+  storage: 'file' | 'redis' | 'supabase';
+  adminEmail: string;
+  supabase: { url: string; publishableKey: string; secretKey: string };
   redis: { url: string; token: string; prefix: string };
-  /** Blob é opcional, usado somente ao guardar mídia. */
-  mediaStorage: 'disk' | 'blob';
-  blobToken: string;
+  /** Upload real usa o bucket privado do Supabase; manual guarda apenas nomes. */
+  mediaStorage: 'disk' | 'supabase';
   /** Tempo que uma execução da fila usa antes de parar de pegar tarefas novas (ms). */
   tickBudgetMs: number;
   /** Validade da trava de uma tarefa em execução (ms). */
@@ -81,23 +82,20 @@ export interface Config {
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const port = num('PORT', 3001);
   const vercel = process.env.VERCEL === '1';
-  // A integração Upstash da Vercel pode criar UPSTASH_REDIS_REST_* ou KV_REST_API_*.
-  const redisUrl = str('UPSTASH_REDIS_REST_URL') || str('KV_REST_API_URL');
-  const redisToken = str('UPSTASH_REDIS_REST_TOKEN') || str('KV_REST_API_TOKEN');
   const base: Config = {
     host: str('HOST', '127.0.0.1'),
     port,
     webOrigin: str('WEB_ORIGIN', 'http://localhost:5173'),
     // Na Vercel só /tmp é gravável (usado apenas como área temporária).
     dataDir: vercel ? '/tmp/agendador' : path.resolve(PROJECT_ROOT, str('DATA_DIR', 'data')),
-    timezone: str('TIMEZONE', 'America/Sao_Paulo'),
-    publishTime: str('PUBLISH_TIME', '12:00'),
+    timezone: 'America/Sao_Paulo',
+    publishTime: '12:00',
     minLeadMinutes: num('MIN_LEAD_MINUTES', 15),
     lateToleranceMinutes: num('LATE_TOLERANCE_MINUTES', 20),
     maxAttempts: num('MAX_ATTEMPTS', 6),
     workerTickMs: num('WORKER_TICK_MS', 5000),
     workerConcurrency: num('WORKER_CONCURRENCY', 2),
-    maxVideoBytes: num('MAX_VIDEO_MB', 1024) * 1024 * 1024,
+    maxVideoBytes: num('MAX_VIDEO_MB', 50) * 1024 * 1024,
     maxImageBytes: num('MAX_IMAGE_MB', 8) * 1024 * 1024,
     ffprobePath: str('FFPROBE_PATH', 'ffprobe'),
     ffmpegPath: str('FFMPEG_PATH', 'ffmpeg'),
@@ -106,10 +104,11 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     mediaLinkTtlMinutes: num('MEDIA_LINK_TTL_MINUTES', 120),
     appUrl: (str('APP_URL') || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '')).replace(/\/+$/, ''),
     runtime: vercel ? 'vercel' : 'local',
-    storage: redisUrl && redisToken ? 'redis' : 'file',
-    redis: { url: redisUrl, token: redisToken, prefix: str('REDIS_PREFIX', 'agj') },
-    mediaStorage: str('BLOB_READ_WRITE_TOKEN') ? 'blob' : 'disk',
-    blobToken: str('BLOB_READ_WRITE_TOKEN'),
+    storage: str('SUPABASE_URL') ? 'supabase' : 'file',
+    adminEmail: str('Login_ADM').trim().toLowerCase(),
+    supabase: { url: str('SUPABASE_URL'), publishableKey: str('SUPABASE_PUBLISHABLE_KEY'), secretKey: str('SUPABASE_SECRET_KEY') },
+    redis: { url: '', token: '', prefix: 'legacy' },
+    mediaStorage: str('SUPABASE_URL') ? 'supabase' : 'disk',
     tickBudgetMs: num('TICK_BUDGET_SECONDS', vercel ? 240 : 3600) * 1000,
     taskLeaseMs: num('TASK_LEASE_MINUTES', vercel ? 6 : 30) * 60_000,
     google: {

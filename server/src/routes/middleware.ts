@@ -12,8 +12,8 @@ export function prepareRequest(ctx: AppContext): RequestHandler {
     if (p === '/settings' || p === '/health') return next();
     const oauth = p.startsWith('/oauth/') || /^\/connections\/[^/]+\/start$/.test(p);
     if (oauth) requireOAuth(ctx);
-    if (p.startsWith('/blob/')) requireMediaStorage(ctx);
-    if (ctx.config.runtime === 'vercel' && req.method !== 'GET' && /^\/(batches|tasks|connections|settings|demo|blob)(\/|$)/.test(p)) requirePersistence(ctx);
+    if (p.startsWith('/storage/')) requireMediaStorage(ctx);
+    if (ctx.config.runtime === 'vercel' && req.method !== 'GET' && /^\/(batches|tasks|connections|settings|demo|storage)(\/|$)/.test(p)) requirePersistence(ctx);
     if (!ctx.lazy) return next();
     if (!hasPersistence(ctx)) return next();
     try {
@@ -24,7 +24,7 @@ export function prepareRequest(ctx: AppContext): RequestHandler {
         if (p.startsWith('/oauth/')) await ctx.oauthUsed.refresh();
       } else if (p === '/tasks' && req.method === 'GET') {
         await Promise.all([mc.batches.refresh(), mc.tasks.refresh(), mc.media.refresh()]);
-      } else if (p.startsWith('/tasks') || p.startsWith('/batches') || p.startsWith('/blob') || p.startsWith('/media')) {
+      } else if (p.startsWith('/tasks') || p.startsWith('/batches') || p.startsWith('/storage') || p.startsWith('/media')) {
         await Promise.all([mc.batches.refresh(), mc.tasks.refresh(), mc.media.refresh(), mc.idem.refresh(), mc.connections.refresh(), mc.demo.refresh()]);
       }
     } catch {
@@ -36,7 +36,7 @@ export function prepareRequest(ctx: AppContext): RequestHandler {
   });
 }
 
-/** Links de mídia e upload (Blob na Vercel; rotas /api localmente). */
+/** Links de mídia e upload privado no Supabase. */
 export function linksOf(ctx: AppContext, _res?: Response): Links {
   return linksFor(ctx, ctx.current());
 }
@@ -53,6 +53,7 @@ function isLoopback(ip: string | undefined): boolean {
 
 export function allowedOrigins(ctx: AppContext): string[] {
   const p = ctx.config.port;
+  if(ctx.config.runtime === 'vercel') return [ctx.config.webOrigin,ctx.config.appUrl].filter(Boolean);
   const list = [ctx.config.webOrigin, `http://localhost:${p}`, `http://127.0.0.1:${p}`, 'http://localhost:5173', 'http://127.0.0.1:5173'];
   if (ctx.config.appUrl) list.push(ctx.config.appUrl);
   return list;
@@ -60,7 +61,7 @@ export function allowedOrigins(ctx: AppContext): string[] {
 
 /**
  * Quem pode chegar à API:
- * - na Vercel: tudo em /api (mesmo domínio da interface; sem login, a pedido do dono);
+ * - na Vercel: rotas privadas de /api exigem Supabase Auth e administrador;
  *   escrita de outras origens é recusada (originGuard);
  * - no Node local: localhost; de fora, só links de mídia assinados (/public/media)
  *   e retornos OAuth (por exemplo, via túnel HTTPS).

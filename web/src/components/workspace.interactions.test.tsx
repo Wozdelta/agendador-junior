@@ -30,6 +30,8 @@ const settings: SettingsDTO = {
 };
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
+  vi.spyOn(api,'session').mockResolvedValue({user:{id:'test',email:'admin@example.com'}});
+  vi.spyOn(api,'manual').mockResolvedValue({rows:[]});
   window.localStorage.clear();
   window.location.hash = '#/novo';
   host = document.createElement('div');
@@ -351,4 +353,55 @@ describe('Novo lote e agenda — eventos DOM', () => {
     expect(host.querySelector('.nav-ripple')).toBeNull();
     expect(raf).toHaveBeenCalledTimes(2);
   });
+});
+import {AuthGate} from './AuthGate';
+describe('login e agenda no Supabase',()=>{
+ it('só mostra o painel após OTP, salva cinco vídeos no servidor e encerra a sessão',async()=>{
+  vi.mocked(api.session).mockResolvedValue({user:null});
+  const requestCode=vi.spyOn(api,'requestCode').mockRejectedValueOnce(new Error('Este e-mail não tem acesso.')).mockResolvedValue({ok:true});
+  const verify=vi.spyOn(api,'verifyCode').mockResolvedValue({user:{id:'admin',email:'admin@example.com'}});
+  const logout=vi.spyOn(api,'logout').mockResolvedValue({ok:true});
+  let saved:any[]=[];
+  const save=vi.spyOn(api,'saveManual').mockImplementation(async ops=>{
+   for(const op of ops as any[]) if(op.type==='insert'&&!saved.some(x=>x.id===op.value.id)) saved.push(op.value);
+   return {rows:saved};
+  });
+  vi.mocked(api.manual).mockImplementation(async()=>({rows:saved}));
+  await render(<AuthGate><ManualAgenda view="all"/></AuthGate>);
+  expect(host.querySelector('.batch-form')).toBeNull();
+  await input('input[type=email]','intruso@example.com');await submit();
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('não tem acesso');
+  await input('input[type=email]','admin@example.com');await submit();
+  expect(requestCode).toHaveBeenLastCalledWith('admin@example.com');
+  await input('input[autocomplete=one-time-code]','123456');await submit();
+  expect(verify).toHaveBeenCalledWith('admin@example.com','123456');
+  await input('input[placeholder="DD/MM/AAAA"]','20/12/2026');
+  await chooseFiles(['1.mp4','2.mp4','3.mp4','4.mp4','5.mp4']);await submit();
+  expect(save).toHaveBeenCalled();expect(saved).toHaveLength(5);
+  expect(saved[4].date).toBe('2026-12-24');expect(new Set(saved.map(x=>x.batchId)).size).toBe(1);
+  expect(localStorage.getItem(MANUAL_AGENDA_KEY)).toBeNull();
+  expect(host.textContent).toContain('no Supabase');
+  const exit=[...host.querySelectorAll('button')].find(x=>x.textContent==='Sair')!;await act(async()=>exit.click());
+  expect(logout).toHaveBeenCalledOnce();expect(host.querySelector('.batch-form')).toBeNull();expect(host.querySelector('input[type=email]')).not.toBeNull();
+ });
+ it('importa a cópia local explicitamente e preserva os valores quando o banco falha',async()=>{
+  const legacy={id:'legacy-id',date:'2026-12-20',originalName:'antigo.mp4',title:'Antigo',description:'Legenda antiga',platforms:{youtube:true,tiktok:false}};
+  localStorage.setItem(MANUAL_AGENDA_KEY,JSON.stringify([legacy]));
+  let saved:any[]=[];
+  vi.mocked(api.manual).mockImplementation(async()=>({rows:saved}));
+  const save=vi.spyOn(api,'saveManual').mockImplementation(async ops=>{for(const op of ops as any[])if(op.type==='insert'&&!saved.some(x=>x.id===op.value.id))saved.push(op.value);return{rows:saved};});
+  await render(<AuthGate><ManualAgenda view="all"/></AuthGate>);
+  expect(save).not.toHaveBeenCalled();
+  const button=[...host.querySelectorAll('button')].find(x=>x.textContent?.includes('Importar registros'))!;
+  await act(async()=>button.click());await act(async()=>button.click());
+  expect(saved).toHaveLength(1);expect(JSON.parse(localStorage.getItem(MANUAL_AGENDA_KEY)!)).toEqual([legacy]);
+  save.mockImplementationOnce(async ops=>{for(const op of ops as any[])if(op.type==='insert')saved.push(op.value);throw new Error('Banco indisponível. Tente de novo.');});
+  await input('input[placeholder="DD/MM/AAAA"]','21/12/2026');await input('input[id$="-title"]','Preservado');await chooseFiles(['novo.mp4']);await submit();
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('Banco indisponível');expect(host.querySelector<HTMLInputElement>('input[id$="-title"]')?.value).toBe('Preservado');expect(host.querySelectorAll('.selected-files li')).toHaveLength(1);
+  await submit();expect(saved).toHaveLength(2);expect(host.querySelectorAll('.selected-files li')).toHaveLength(0);
+ });
+ it('Termos e Privacidade abrem sem consultar sessão',async()=>{
+  window.history.replaceState({},'','/termos');await render(<App/>);expect(host.textContent).toContain('Termos de Uso');expect(api.session).not.toHaveBeenCalled();
+  window.history.replaceState({},'','/privacidade');await render(<App/>);expect(host.textContent).toContain('Política de Privacidade');expect(api.session).not.toHaveBeenCalled();window.history.replaceState({},'','/');
+ });
 });

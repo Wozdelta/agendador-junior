@@ -77,7 +77,7 @@ export async function makeEnv(opts: { dir?: string; mode?: 'demo' | 'real'; cloc
   if (opts.mode !== 'real') await ctx.settings.mutate((s) => (s.mode = 'demo'));
   const worker = new Worker(ctx);
   await worker.recover();
-  const app = createApp(ctx);
+  const app = createApp(ctx,(_req,_res,next)=>{ctx.ownerId='00000000-0000-4000-8000-000000000001';next();});
   return { ctx, app, api: request(app), worker, clock, dir };
 }
 

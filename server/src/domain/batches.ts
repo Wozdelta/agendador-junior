@@ -1,5 +1,5 @@
+import { deleteMediaObject } from '../lib/mediaio.js';
 import crypto from 'node:crypto';
-import { del } from '@vercel/blob';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AppContext, ModeContext } from '../context.js';
@@ -173,14 +173,13 @@ export function newItem(name: string, size?: number): BatchItem {
   };
 }
 
-export async function removeMediaFile(mc: ModeContext, mediaId?: string): Promise<void> {
+export async function removeMediaFile(ctx: AppContext, mc: ModeContext, mediaId?: string): Promise<void> {
   if (!mediaId) return;
   const inUse = mc.tasks.find((t) => t.mediaId === mediaId || t.coverId === mediaId).length > 0;
   if (inUse) return;
   const m = mc.media.get(mediaId);
   if (!m) return;
-  if (m.blobUrl) await del(m.blobUrl);
-  else await fs.rm(path.join(mc.mediaDir, m.internalName), { force: true });
+  await deleteMediaObject(ctx,mc,m);
   await mc.media.mutate((d) => {
     const i = d.findIndex((x) => x.id === mediaId);
     if (i >= 0) d.splice(i, 1);

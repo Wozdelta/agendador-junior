@@ -71,9 +71,9 @@ export function TermsPage() {
 
       <h2>2. Acesso</h2>
       <p>
-        O app é destinado ao uso do próprio responsável e não tem cadastro de usuários nem tela de
-        login: a interface abre direto para quem acessa o endereço. Não compartilhe o endereço da
-        interface com terceiros.
+        O acesso ao painel exige um código temporário enviado pelo Supabase Auth ao e-mail
+        administrador configurado no servidor. Não há cadastro público. Termos, Privacidade e
+        a verificação da plataforma continuam públicos.
       </p>
 
       <h2>3. Contas conectadas</h2>
@@ -132,11 +132,10 @@ export function TermsPage() {
 
       <h2>6. Disponibilidade e limitações</h2>
       <p>
-        As publicações dependem das plataformas de destino, das permissões aprovadas para o app e de
-        o servidor do app estar ligado nos horários que exigem ação do app (por exemplo, a
-        publicação do Instagram às 12:00). Quando um horário não puder ser cumprido, o item aparece
-        como "Atrasado" e você pode escolher uma nova data. O serviço é fornecido no estado em que
-        se encontra, sem garantia de que cada publicação ocorrerá no horário exato.
+        A agenda manual registra um vídeo por dia às 12:00, mas a publicação depende da sua
+        ação na plataforma. Agendamentos nativos de YouTube e Facebook só são assumidos pela rede
+        após confirmação remota. A Vercel não executa um timer permanente: Instagram e TikTok
+        permanecem manuais. O serviço depende da disponibilidade e das permissões de cada provedor.
       </p>
 
       <h2>7. Alterações e contato</h2>
@@ -184,9 +183,9 @@ export function PrivacyPage() {
           links das publicações nas plataformas, tentativas, mensagens de erro e histórico.
         </li>
         <li>
-          <strong>Acesso:</strong> o app não usa cookies, contas de usuário, ferramentas de
-          analytics nem publicidade. Os provedores de hospedagem podem registrar dados técnicos das
-          requisições (como IP, data e hora).
+          <strong>Acesso:</strong> e-mail e identidade confirmada pelo Supabase Auth, além de
+          cookies essenciais HttpOnly para a sessão. Não usamos analytics ou publicidade.
+          Os provedores podem registrar IP, data e hora das requisições.
         </li>
       </ul>
 
@@ -202,16 +201,18 @@ export function PrivacyPage() {
         O vídeo, a capa e os textos de cada publicação são enviados apenas à plataforma de destino
         (Google/YouTube, Meta/Facebook/Instagram ou TikTok) no momento do envio. Para o Instagram, a
         Meta baixa o arquivo por um link temporário e assinado, válido só para aquele arquivo. A
-        interface é hospedada na Vercel, que encaminha as requisições ao servidor do app; os vídeos
-        vão direto do seu navegador ao servidor do app.
+        interface e a API são hospedadas na Vercel. O Supabase processa autenticação e banco;
+        o provedor SMTP entrega os códigos de acesso. Na agenda manual guardamos apenas nomes
+        e textos. No fluxo de upload real, arquivos vão diretamente para um bucket privado
+        no Supabase Storage e são acessados por links temporários.
       </p>
 
       <h2>5. Onde e como os dados ficam</h2>
       <p>
-        Os dados ficam no servidor do app:{' '}
-        <Fill value={LEGAL.backendLocation} what="local onde o backend e os arquivos ficam" />. Os
-        tokens são criptografados, a comunicação entre a interface hospedada e o servidor usa um
-        segredo compartilhado e os links de mídia expiram.
+        Os dados ficam no PostgreSQL do projeto Supabase escolhido pelo responsável. Tokens
+        OAuth ficam criptografados com AES-256-GCM, acessíveis somente pelo backend após
+        validação do administrador. A comunicação usa HTTPS. Registros antigos do navegador
+        são importados somente por ação explícita e a cópia local é preservada.
       </p>
 
       <h2>6. Retenção</h2>

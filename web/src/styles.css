@@ -230,3 +230,4 @@ textarea { resize: vertical; }
 .legal h2 { margin-top: 26px; }
 .legal li { margin-bottom: 6px; }
 mark.fill { background: #fde68a; color: #5b3a00; padding: 0 4px; border-radius: 4px; font-weight: 600; }
+.login-page{min-height:100dvh;display:grid;place-items:center;padding:24px}.login-panel{width:min(100%,460px)}.login-panel form{display:grid;gap:18px}.login-panel label{display:grid;gap:8px}.login-panel input{width:100%}.session-bar{display:flex;gap:14px;align-items:center;justify-content:flex-end;max-width:1240px;margin:auto;padding:10px 24px;font-size:12px;color:var(--muted,#a9abc0)}.session-bar span{overflow-wrap:anywhere}.session-bar button{min-height:36px}

@@ -11,6 +11,7 @@ import type {
 export interface MediaRecord extends MediaInfo {
   internalName: string; // nome gerado (disco) ou pathname no Blob; o nome original nunca vira caminho
   /** URL no Vercel Blob (produção na Vercel). Sem ela, o arquivo está em DATA_DIR. */
+  storagePath?: string;
   blobUrl?: string;
   createdAt: string;
 }

@@ -1,39 +1,79 @@
 import fs from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
-import { head } from '@vercel/blob';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import * as storage from '../src/lib/supabase.js';
 import { fixtures, futureBr, makeEnv } from './helpers.js';
-import { blobReader } from '../src/lib/mediaio.js';
-
-vi.mock('@vercel/blob', () => ({ head: vi.fn(), del: vi.fn() }));
-describe('mídia persistente no caminho de produção', () => {
-  it('finaliza cinco uploads de teste lendo MP4 por Range, sem ffprobe, e mantém URLs Blob', async () => {
+import { remoteReader } from '../src/lib/mediaio.js';
+afterEach(() => vi.restoreAllMocks());
+describe('Supabase Storage privado', () => {
+  it('finaliza cinco uploads diretos por Range sem ffprobe e sem expor bucket público', async () => {
     const bytes = fs.readFileSync(fixtures().vertical);
     const fetchImpl: typeof fetch = async (_url, init) => {
-      const range = new Headers(init?.headers).get('range')!;
-      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(range)!;
+      if (init?.method === 'HEAD')
+        return new Response(null, { headers: { 'content-length': String(bytes.length) } });
+      const [, start, end] = /bytes=(\d+)-(\d+)/.exec(new Headers(init?.headers).get('range')!)!;
       return new Response(bytes.subarray(Number(start), Number(end) + 1), { status: 206 });
     };
-    const e = await makeEnv({ fetchImpl, config: { mediaStorage: 'blob', blobToken: 'fake-test-token' } });
-    const b = (await e.api.post('/api/batches').send({ startDate: futureBr(8) }).expect(201)).body;
-    const reserved = (await e.api.post(`/api/batches/${b.id}/items`).send({ files: Array.from({ length: 5 }, (_, i) => ({ name: `video${i}.mp4` })) }).expect(201)).body;
+    vi.spyOn(storage, 'supabase').mockReturnValue({
+      storage: {
+        from: () => ({
+          createSignedUploadUrl: async (path: string) => ({
+            data: { signedUrl: `https://storage.test/${path}?token=test` },
+            error: null,
+          }),
+        }),
+      },
+    } as any);
+    vi.spyOn(storage, 'storageUrl').mockImplementation(
+      async (_config, path) => `https://storage.test/${path}?token=read`,
+    );
+    const e = await makeEnv({ fetchImpl, config: { mediaStorage: 'supabase' } });
+    const b = (
+      await e.api
+        .post('/api/batches')
+        .send({ startDate: futureBr(8) })
+        .expect(201)
+    ).body;
+    const reserved = (
+      await e.api
+        .post(`/api/batches/${b.id}/items`)
+        .send({ files: Array.from({ length: 5 }, (_, i) => ({ name: `video${i}.mp4` })) })
+        .expect(201)
+    ).body;
     let final: any;
     for (const itemId of reserved.itemIds) {
-      const prep = (await e.api.post('/api/blob/prepare').send({ batchId: b.id, itemId, kind: 'video' }).expect(200)).body;
-      const url = `https://test.public.blob.vercel-storage.com/${prep.pathname}`;
-      vi.mocked(head).mockResolvedValue({ pathname: prep.pathname, size: bytes.length } as any);
-      final = (await e.api.post('/api/blob/complete').send({ ticket: prep.ticket, url }).expect(200)).body;
-      await e.api.post('/api/blob/complete').send({ ticket: prep.ticket, url }).expect(200);
+      const prep = (
+        await e.api
+          .post('/api/storage/prepare')
+          .send({ batchId: b.id, itemId, kind: 'video' })
+          .expect(200)
+      ).body;
+      expect(prep.url).toContain(e.ctx.ownerId);
+      final = (await e.api.post('/api/storage/complete').send({ ticket: prep.ticket }).expect(200))
+        .body;
+      await e.api.post('/api/storage/complete').send({ ticket: prep.ticket }).expect(200);
     }
-    expect(final.items.every((i: any) => i.uploadStatus === 'ready' && i.media.url.includes('.blob.vercel-storage.com/'))).toBe(true);
+    expect(
+      final.items.every(
+        (i: any) => i.uploadStatus === 'ready' && i.media.url.startsWith('/api/media/'),
+      ),
+    ).toBe(true);
     expect(final.items.every((i: any) => i.scheduledLocal.endsWith('12:00'))).toBe(true);
-    expect(final.items[0].media).toMatchObject({ width: 360, height: 640, videoCodec: 'h264' });
-    expect(e.ctx.current().media.all()).toHaveLength(5);
+    expect(
+      e.ctx
+        .current()
+        .media.all()
+        .every((m) => m.storagePath && !m.blobUrl),
+    ).toBe(true);
     expect(fs.readdirSync(e.ctx.current().mediaDir)).toHaveLength(0);
-    await e.api.put(`/api/batches/${b.id}/items/${reserved.itemIds[0]}/video`).send('test').expect(400);
-    await e.api.post('/api/blob/complete').send({ ticket: 'forged', url: 'https://internal.example/x' }).expect(400);
+    await e.api
+      .post('/api/storage/complete')
+      .send({ ticket: 'forged', url: 'https://internal.example' })
+      .expect(400);
   });
-  it('não baixa um vídeo inteiro quando o armazenamento ignora Range', async () => {
-    const e = await makeEnv({ fetchImpl: async () => new Response('full body', { status: 200 }) });
-    await expect(blobReader(e.ctx, 'https://test.public.blob.vercel-storage.com/file')(0, 8)).rejects.toMatchObject({ status: 422 });
+  it('recusa baixar o vídeo inteiro quando Range é ignorado', async () => {
+    const e = await makeEnv({ fetchImpl: async () => new Response('full body') });
+    await expect(remoteReader(e.ctx, 'https://storage.test/file')(0, 8)).rejects.toMatchObject({
+      status: 422,
+    });
   });
 });

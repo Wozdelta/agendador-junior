@@ -9,7 +9,7 @@ import type {
   SettingsDTO,
   TaskDTO,
 } from '../../../server/src/shared/types';
-import { upload } from '@vercel/blob/client';
+import type { ManualEntry } from './manual-agenda';
 
 export class ApiError extends Error {
   constructor(
@@ -47,6 +47,7 @@ async function call<T>(method: string, url: string, body?: unknown, opts: { idem
   } catch {
     throw new ApiError(res.status, `Serviço indisponível: resposta inválida da API (HTTP ${res.status}). Tente de novo em instantes.`, undefined, 'invalid_response');
   }
+  if(res.status===401&&!url.startsWith('/api/auth/')) window.dispatchEvent(new Event('agendador-session-expired'));
   if (!res.ok) throw new ApiError(res.status, data?.error ?? `Erro ${res.status}`, data?.details, data?.code);
   return data as T;
 }
@@ -61,6 +62,13 @@ export interface DraftAgendaRow {
 }
 
 export const api = {
+  importLegacy: (backup:unknown) => call<{ok:boolean;imported:Record<string,number>}>('POST','/api/migration/legacy',backup),
+  session: () => call<{user:{id:string;email:string}|null}>('GET','/api/auth/session'),
+  requestCode: (email:string) => call('POST','/api/auth/request-code',{email}),
+  verifyCode: (email:string,code:string) => call<{user:{id:string;email:string}}>('POST','/api/auth/verify-code',{email,code}),
+  logout: () => call('POST','/api/auth/logout',{}),
+  manual: () => call<{rows:ManualEntry[]}>('GET','/api/manual'),
+  saveManual: (ops:unknown[]) => call<{rows:ManualEntry[]}>('POST','/api/manual',{ops}),
   settings: () => call<SettingsDTO>('GET', '/api/settings'),
   setMode: (mode: 'demo' | 'real') => call<SettingsDTO>('POST', '/api/settings/mode', { mode, confirm: true }),
   setFault: (platform: Platform, kind: string | null, times = 1) => call('POST', '/api/demo/faults', { platform, kind, times }),
@@ -99,10 +107,10 @@ export const api = {
 
 /**
  * Envio de arquivo com progresso (XHR, pois fetch não informa progresso de upload).
- * A URL vem da API: multipart local ou upload direto para o Vercel Blob.
+ * A URL vem da API: multipart local ou upload direto para o Supabase Storage.
  */
 export function uploadFile(url: string, file: File, onProgress: (pct: number) => void): Promise<BatchDTO> {
-  if (url.startsWith('blob:')) return uploadBlob(url, file, onProgress);
+  if (url.startsWith('storage:')) return uploadStorage(url, file, onProgress);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
@@ -125,7 +133,7 @@ export function uploadFile(url: string, file: File, onProgress: (pct: number) =>
   });
 }
 
-async function uploadBlob(url: string, file: File, onProgress: (pct: number) => void): Promise<BatchDTO> {
+async function uploadStorage(url: string, file: File, onProgress: (pct: number) => void): Promise<BatchDTO> {
   const [, mode, batchId, itemId, kind] = url.split(':');
   if (kind === 'cover' && file.type === 'image/png') {
     const bitmap = await createImageBitmap(file);
@@ -139,13 +147,14 @@ async function uploadBlob(url: string, file: File, onProgress: (pct: number) => 
     if (!jpeg) throw new ApiError(0, 'Não foi possível converter a capa. Envie uma imagem JPEG.');
     file = new File([jpeg], 'capa.jpg', { type: 'image/jpeg' });
   }
-  const { ticket, pathname } = await call<{ ticket: string; pathname: string }>('POST', '/api/blob/prepare', { batchId, itemId, kind });
-  const blob = await upload(pathname, file, {
-    access: 'public', handleUploadUrl: '/api/blob/token', multipart: true,
-    clientPayload: JSON.stringify({ ticket, mode }),
-    onUploadProgress: p => onProgress(Math.round(p.percentage)),
+  const { ticket, url: signedUrl } = await call<{ticket:string;url:string}>('POST','/api/storage/prepare',{batchId,itemId,kind});
+  await new Promise<void>((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();xhr.open('PUT',signedUrl);xhr.setRequestHeader('Content-Type',file.type);
+    xhr.upload.onprogress=e=>e.lengthComputable&&onProgress(Math.round(e.loaded/e.total*100));
+    xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new ApiError(xhr.status,'Upload recusado. Confira o limite do Storage e tente de novo.'));
+    xhr.onerror=()=>reject(new ApiError(0,'Falha de rede no upload. Tente de novo.'));xhr.send(file);
   });
-  return call<BatchDTO>('POST', '/api/blob/complete', { ticket, url: blob.url });
+  return call<BatchDTO>('POST','/api/storage/complete',{ticket});
 }
 
 /** Link de download a partir da URL de mídia entregue pelo backend. */

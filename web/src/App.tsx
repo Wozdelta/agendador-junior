@@ -1,3 +1,4 @@
+import { AuthGate } from './components/AuthGate';
 import { useCallback, useEffect, useState } from 'react';
 import type { SettingsDTO } from '../../server/src/shared/types';
 import { api } from './lib/api';
@@ -31,10 +32,11 @@ export function App() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   if (path === '/termos') return <TermsPage />;
   if (path === '/privacidade') return <PrivacyPage />;
-  return <MainApp />;
+  return <AuthGate><MainApp /></AuthGate>;
 }
 
 function MainApp() {
+  const [uploadMode,setUploadMode]=useState(false);
   const [route, setRoute] = useState<Route>(readRoute);
   const [settings, setSettings] = useState<SettingsDTO | null>(null);
   const [backendError, setBackendError] = useState<string | null>(null);
@@ -113,12 +115,13 @@ function MainApp() {
             {backendError} <button onClick={loadSettings}>Tentar de novo</button>
           </div>
         )}
-        {!advanced && (
+        {route==='novo'&&advanced&&<div className="row"><button aria-pressed={!uploadMode} onClick={()=>setUploadMode(false)}>Agenda manual ? somente nomes</button><button aria-pressed={uploadMode} onClick={()=>setUploadMode(true)}>Upload e agendamento nativo</button></div>}
+        {(!advanced || !uploadMode) && (
           <div hidden={route !== 'novo'} className={route === 'novo' ? 'page-enter' : ''}>
             <ManualAgenda view="create" />
           </div>
         )}
-        {advanced && settings && route === 'novo' && (
+        {uploadMode && advanced && settings && route === 'novo' && (
           <div className="page-enter">
             <NewBatch settings={settings} key={settings.mode} />
           </div>

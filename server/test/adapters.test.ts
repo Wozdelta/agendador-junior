@@ -106,7 +106,6 @@ describe('YouTube (videos.insert retomável + publishAt)', () => {
     env.ctx.config.runtime = 'vercel';
     env.ctx.config.storage = 'redis'; // storage fixture já carregado no contexto
     env.ctx.config.mediaStorage = 'disk';
-    env.ctx.config.blobToken = '';
     await env.api.post('/api/tasks/process-native').send({}).expect(200);
     expect(task(env).state).toBe('scheduled_remote');
     expect(task(env).remoteId).toBe('YT_VIDEO_1');

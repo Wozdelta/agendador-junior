@@ -1,69 +1,16 @@
 # Agendador Junior
 
-React/Vite + Express em Vercel Functions, com **agenda manual disponível sem Redis, Blob ou segredos**. Nenhum serviço novo é necessário para abrir a interface, Agenda ou Conexões.
+React/Vite na Vercel, API Express em Vercel Functions, Supabase Auth e PostgreSQL. O painel agora exige login por código temporário para um único administrador. Termos, Privacidade e a verificação TikTok continuam públicos. Não há Redis, Vercel Blob, túnel ou processo residente obrigatório.
 
-## Correção do bloqueio
+## Configuração
 
-`api/index.ts` exigia globalmente Redis, Blob, `TOKEN_ENCRYPTION_KEY` e `CRON_SECRET` antes de atender qualquer rota. Essa condição foi removida. A inicialização agora é preguiçosa: cada rota carrega apenas o estado que utiliza; não grava dados em `/tmp` fingindo persistência na Vercel. Configuração de criptografia ausente ou inválida também não bloqueia telas de leitura.
+Siga [supabase/README.md](supabase/README.md). Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor. Cadastre as variáveis de [.env.example](.env.example) na Vercel, sem prefixo `VITE_`.
 
-Erros continuam JSON com status e código, e o React trata texto/HTML/JSON inválido com **Tentar de novo**. Se um Redis já configurado estiver indisponível, Agenda e Conexões mostram o aviso sem apagar dados ou derrubar a agenda manual.
-
-## Funcionalidades e dependências
-
-| Funcionalidade | Necessidade | Alternativa disponível |
-| --- | --- | --- |
-| Abrir interface, Agenda e Conexões | somente o projeto na Vercel | nenhuma integração obrigatória |
-| Agenda manual | armazenamento deste navegador | registrar títulos, nomes de vídeos, descrições e conclusão por rede; exportar JSON |
-| Guardar conexões OAuth no servidor | persistência já suportada (Redis opcional), chave AES-256-GCM e credenciais do provedor | publicar diretamente na plataforma |
-| Guardar vídeos/capas no servidor | persistência de metadados + Blob opcional | manter os arquivos originais e enviá-los diretamente à plataforma |
-| Preparar agendamento nativo | conexão válida e mídia disponível; provedor precisa aceitar a data e o agendamento | preparar pelo painel da própria plataforma |
-| Executar tarefa futura do aplicativo | indisponível nesta versão na Vercel | ação manual no horário; não há cron ou processo residente |
-
-A agenda manual funciona também enquanto a API ainda não respondeu. Registra **um vídeo por dia às 12:00 em America/Sao_Paulo**, com status independente por plataforma. Escolher arquivos registra somente os nomes: vídeos e capas não são enviados nem guardados. Os registros ficam no `localStorage` deste navegador, sem sincronização ou notificações. Limpar os dados do navegador remove a agenda; use **Exportar agenda** como cópia. JSON inválido ou armazenamento bloqueado gera erro com nova tentativa, sem sobrescrever dados. Alterações simultâneas em outra aba são detectadas antes de salvar.
-
-## Conexões e agendamento nativo preservados
-
-Redis e Blob permanecem opcionais para quem já os usa; nenhum recurso remoto foi criado ou removido nesta alteração. Conexões criptografadas existentes continuam sendo lidas quando sua persistência está disponível. Sem Blob, conectar OAuth continua possível; sem persistência ou chave válida, apenas a ação de conectar é recusada, com explicação. Tokens e segredos nunca vão para o React.
-
-Em **Agenda → Preparar / retomar agendamentos nativos**, a Function processa somente tarefas compatíveis com agendamento nativo de YouTube/Facebook, por ação explícita. Se um envio exigir mais ciclos, volte a acionar o botão. Apenas **Agendado na plataforma**, após confirmação remota, significa que o provedor assumiu a publicação futura sem o app aberto. O horário efetivo é controlado pelo provedor. Não há polling nem retry automático depois que a requisição termina. Datas fora da janela nativa exigem voltar perto do dia ou usar publicação manual; recusa do agendamento pelo Facebook não ativa uma fila futura escondida.
-
-Instagram e TikTok ficam manuais na Vercel. As conexões são preservadas, mas não se promete Direct Post ou envio futuro à caixa do TikTok. Tarefas antigas não confirmadas recebem alternativa manual, sem apagar seu histórico ou IDs. Antes de publicar manualmente, confira se um envio anterior já apareceu na plataforma. Vídeos que existiam somente no PC não podem ser recuperados pela Vercel: use o arquivo original.
-
-O código local conserva seus conectores e worker para desenvolvimento. Isso não é requisito para usar o site publicado.
-
-## Vercel
-
-- **Root Directory: raiz do repositório (`.` / campo vazio), não `web`.**
-- Preset **Vite**, install `npm install`, build `npm run build:web`, output `web/dist`, como em `vercel.json`.
-- Para as telas e a agenda manual, **não é necessário cadastrar variáveis**. `APP_URL` pode ser detectado pelo domínio de produção; cadastre explicitamente ao usar OAuth com domínio próprio.
-- A Function de preparação nativa conserva `maxDuration: 300`; use Fluid Compute para esse caminho longo. A agenda manual não depende dele.
-- Não há configuração cron. Foram removidos o endpoint `/api/cron/tick`, a leitura de `CRON_SECRET` e o script QStash. Se ativou um schedule externo anteriormente, desative-o no painel: o endpoint antigo agora retorna 404. Nada foi alterado remotamente nesta tarefa.
-
-### Variáveis opcionais, somente para os recursos usados
-
-O `.env.example` lista as variáveis ainda lidas pelo código, incluindo as de desenvolvimento local. Sem esses recursos, deixe-as ausentes.
-
-| Recurso | Variáveis |
-| --- | --- |
-| URLs/callbacks | `APP_URL`, `WEB_ORIGIN`, `PUBLIC_BASE_URL` quando necessário |
-| Persistência no servidor | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `REDIS_PREFIX` (ou os aliases `KV_REST_API_URL` / `KV_REST_API_TOKEN`) |
-| Upload persistente | `BLOB_READ_WRITE_TOKEN`, store público, somente para guardar mídia |
-| Criptografia OAuth | `TOKEN_ENCRYPTION_KEY`, 32 bytes base64; preserve a chave anterior para ler conexões existentes |
-| YouTube | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
-| Facebook / Instagram | `META_APP_ID`, `META_APP_SECRET`, `META_REDIRECT_URI`; opções Meta continuam documentadas no exemplo |
-| TikTok | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`; flags de envio continuam restritos ao fluxo local e somente com permissões aprovadas |
-
-Callbacks do domínio atual:
-
-- `https://agendador-junior.vercel.app/api/oauth/youtube/callback`
-- `https://agendador-junior.vercel.app/api/oauth/facebook/callback` (também Instagram)
-- `https://agendador-junior.vercel.app/api/oauth/tiktok/callback`
-
-Sem uso de OAuth, a chave de criptografia não é obrigatória. Não cadastre segredos com prefixo `VITE_`. Remova as variáveis antigas `CRON_SECRET`, `QSTASH_TOKEN`, `BACKEND_URL` e `BACKEND_PROXY_SECRET` se não forem usadas por outro projeto. Não habilite integrações ou contrate serviços só para abrir o aplicativo.
-
-`/termos`, `/privacidade` e os arquivos de `web/public`, incluindo o `.txt` do TikTok, continuam preservados com os rewrites existentes.
-
-## Desenvolvimento e testes
+- Node.js: 24.x, como em `package.json` (o SDK Supabase requer Node 22+).
+- Root Directory: raiz do repositório (`.` / campo vazio), não `web`.
+- Preset: Vite. Install: `npm install`. Build: `npm run build:web`. Output: `web/dist`.
+- Preserve os rewrites de `vercel.json`. Não há cron.
+- Desenvolvimento: copie `.env.example` para `.env`, preencha Supabase/Login_ADM e use `APP_URL` e `WEB_ORIGIN` como `http://localhost:5173`.
 
 ```sh
 npm install
@@ -73,4 +20,30 @@ npm run typecheck
 npm test
 ```
 
-Fora da Vercel, o modo local usa JSON/disco quando não há integrações e precisa de FFmpeg/FFprobe para upload local. A demonstração com fila fica restrita ao ambiente local. Consulte [VERIFICACAO.md](VERIFICACAO.md) para resultados e limitações da validação desta revisão.
+## Dados e autorização
+
+`Login_ADM` é lida somente no servidor, normalizada com trim/lowercase e comparada com a identidade confirmada por `Supabase Auth.getUser`. Solicitação de OTP usa `shouldCreateUser: false`. Toda API privada, incluindo callbacks OAuth, valida sessão e administrador antes de usar a chave secreta. Cookies essenciais são HttpOnly/SameSite=Lax e Secure na Vercel. Uma sessão revogada no banco deixa de acessar a API imediatamente, mesmo com uma cópia do cookie anterior. A sessão do aplicativo dura até sete dias; o token Supabase é renovado no servidor quando necessário.
+
+RLS e permissões negam acesso direto de `anon`/`authenticated` às tabelas e RPCs. Só o backend autorizado usa a chave secreta. Conexões OAuth continuam AES-256-GCM; preserve `TOKEN_ENCRYPTION_KEY`. Nenhum segredo é compilado no React. Dados de proprietários diferentes usam chaves separadas; alterar Login_ADM não transfere os dados de uma conta para outra.
+
+A agenda manual é o fluxo inicial: guarda nomes e textos, sem transferir arquivos. Os registros são salvos na conta Supabase. O botão **Importar registros antigos sem duplicar** importa a agenda existente do navegador por IDs estáveis, sem apagar sua cópia local. A importação é explícita e pode ser repetida. Exportação JSON continua disponível. A edição da descrição é salva ao sair do campo. Em falha, mantenha a tela aberta, corrija/recarregue a conexão e tente novamente; o texto digitado não é limpo.
+
+`manual_batches`, `manual_items` e `manual_platforms` são a projeção relacional da agenda, gravada na mesma transação dos documentos. Os payloads completos de lotes avançados, tarefas, mídia, conexões criptografadas e idempotência ficam em `scheduler_records`, particionados por proprietário, modo e coleção. As views `integration_*` permitem consultar itens, textos e status sem perder campos do domínio Node existente. O controle de revisão com bloqueio de linha no PostgreSQL evita sobrescritas concorrentes; conflitos são reaplicados sobre a versão atual.
+
+## Upload e plataformas
+
+**Upload e agendamento nativo** é um fluxo opcional, separado da agenda manual. Usa o bucket privado `agendador-media` no Supabase Storage: upload direto por URL assinada, progresso real, validação MP4/MOV/JPEG no servidor por intervalos de bytes e download assinado por dez minutos. O setup limita arquivos a 50 MB; para ampliar, ajuste o bucket, `MAX_VIDEO_MB` e os limites do plano contratado. O upload atual é direto, sem retomada automática após perda de conexão; selecione o arquivo novamente para tentar outra vez. Nenhum vídeo atravessa o corpo da Function da Vercel.
+
+YouTube/Facebook conservam seus agendamentos nativos. Em **Agenda → Preparar / retomar agendamentos nativos**, a Function trabalha por ação explícita e respeita leases/idempotência. Só a confirmação **Agendado na plataforma** significa que a rede assumiu a publicação futura. Falhas, janelas de agendamento e envios incompletos exigem nova ação no painel. Não há timer, cron nem execução futura automática da fila. Instagram e TikTok permanecem manuais na Vercel; flags de permissões TikTok não prometem envio futuro automático. Confira a rede antes de repetir qualquer publicação cujo resultado esteja indefinido.
+
+Callbacks permanecem:
+
+- `https://agendador-junior.vercel.app/api/oauth/youtube/callback`
+- `https://agendador-junior.vercel.app/api/oauth/facebook/callback` (também Instagram)
+- `https://agendador-junior.vercel.app/api/oauth/tiktok/callback`
+
+Contas antes persistidas somente em JSON/Redis não são automaticamente transferidas ao trocar o backend. Use a importação de backup descrita no guia antes de retirar o serviço antigo, ou reconecte as contas. Arquivos só existentes no PC precisam ser enviados novamente; objetos Blob antigos não são apagados remotamente pelo aplicativo. As classes antigas de persistência foram mantidas para compatibilidade de testes e leitura de backups; variáveis Redis/Blob não selecionam mais o backend de produção.
+
+## Interface
+
+O motor da navegação Liquid Stretch fica em `web/src/lib/liquid-motion.ts`, com componente `web/src/components/LiquidNav.tsx`. A prévia local de quatro segundos usa `/#/motion` e agora também exige login. O fluxo manual preserva um vídeo por dia às 12:00 em `America/Sao_Paulo`, ordem dos vídeos e situação independente por rede. Consulte o guia Supabase para os testes desta migração; o histórico visual anterior está em `VERIFICACAO.md`.

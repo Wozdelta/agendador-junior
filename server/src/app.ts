@@ -1,3 +1,6 @@
+import { migrationRoutes } from './routes/migration.js';
+import { authRoutes, authenticate } from './routes/auth.js';
+import { manualRoutes } from './routes/manual.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
@@ -8,7 +11,7 @@ import { errorHandler, externalGuard, noStore, originGuard, prepareRequest } fro
 import { cloudRoutes } from './routes/cloud.js';
 import { connectionRoutes, mediaRoutes, publicRoutes, settingsRoutes, taskRoutes, webDist } from './routes/other.js';
 
-export function createApp(ctx: AppContext): express.Express {
+export function createApp(ctx: AppContext, authorize: express.RequestHandler = authenticate(ctx)): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.set('etag', false);
@@ -19,6 +22,10 @@ export function createApp(ctx: AppContext): express.Express {
   api.use(noStore);
   api.use(originGuard(ctx));
   api.use(express.json({ limit: '1mb' }));
+  api.use(authRoutes(ctx));
+  api.use(authorize);
+  api.use(manualRoutes(ctx));
+  api.use(migrationRoutes(ctx));
   api.use(prepareRequest(ctx));
   api.use(cloudRoutes(ctx));
   api.get('/health', (_req, res) => {

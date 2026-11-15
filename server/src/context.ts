@@ -1,3 +1,4 @@
+import { SupabaseBackend } from './lib/supabase.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -38,6 +39,7 @@ export interface ModeContext {
 
 
 export interface AppContext {
+  ownerId?: string;
   lazy: boolean;
   config: Config;
   clock: Clock;
@@ -71,7 +73,11 @@ function deadlineFetch(fetchImpl: FetchLike, budget: number): FetchLike {
   };
 }
 
-function factory(config: Config, fetchImpl: FetchLike): Factory {
+function factory(config: Config, fetchImpl: FetchLike, owner: () => string | undefined): Factory {
+  if (config.storage === 'supabase') return {
+    col: (mode, name) => new SupabaseBackend(config, owner, mode, name, fetchImpl),
+    doc: (mode, name) => new SupabaseBackend(config, owner, mode, name, fetchImpl),
+  };
   if (config.storage === 'redis') {
     const redis = new RedisRest(config.redis.url, config.redis.token, fetchImpl);
     const key = (mode: string, name: string) => `${config.redis.prefix}:${mode}:${name}`;
@@ -115,21 +121,26 @@ export async function createContext(opts: {
 }): Promise<AppContext> {
   const { config } = opts;
   if (config.runtime !== 'vercel') await fs.mkdir(config.dataDir, { recursive: true });
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  const f = factory(config, fetchImpl);
+  const rawFetch = opts.fetchImpl ?? fetch;
+  const fetchImpl = config.runtime === 'vercel' ? deadlineFetch(rawFetch,config.tickBudgetMs) : rawFetch;
+  let ownerId: string | undefined;
+  const lazy = opts.lazy || config.storage === 'supabase';
+  const f = factory(config, fetchImpl, () => ownerId);
   const settings = new JsonDoc<{ mode: AppMode }>(f.doc('', 'settings'), { mode: 'real' });
   const oauthUsed = new JsonDoc<{ used: Record<string, number> }>(f.doc('', 'oauth-used'), { used: {} });
-  if (!opts.lazy) { await settings.load(); await oauthUsed.load(); }
+  if (!lazy) { await settings.load(); await oauthUsed.load(); }
   const modes = {
-    demo: await createMode('demo', config.dataDir, f, opts.lazy, config.runtime !== 'vercel'),
-    real: await createMode('real', config.dataDir, f, opts.lazy, config.runtime !== 'vercel'),
+    demo: await createMode('demo', config.dataDir, f, lazy, config.runtime !== 'vercel'),
+    real: await createMode('real', config.dataDir, f, lazy, config.runtime !== 'vercel'),
   };
   const ctx: AppContext = {
-    lazy: !!opts.lazy,
+    get ownerId() { return ownerId; },
+    set ownerId(value) { ownerId = value; },
+    lazy: !!lazy,
     config,
     clock: opts.clock ?? systemClock,
     prober: opts.prober ?? createFfprobe(config.ffprobePath),
-    fetch: config.runtime === 'vercel' ? deadlineFetch(fetchImpl, config.tickBudgetMs) : fetchImpl,
+    fetch: fetchImpl,
     vault: new TokenVault(config.tokenKey),
     // Derivada da chave mestra: links assinados continuam válidos após reiniciar o backend.
     linkSecret: config.tokenKey ? deriveKey(config.tokenKey, 'links-de-midia') : crypto.randomBytes(32),

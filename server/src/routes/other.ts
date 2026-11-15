@@ -1,3 +1,4 @@
+import { storageUrl } from '../lib/supabase.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Router } from 'express';
@@ -73,6 +74,7 @@ export function mediaRoutes(ctx: AppContext): Router {
     const mc = ctx.current();
     const m = mc.media.get(String(req.params.id));
     if (!m) throw new AppError(404, 'Arquivo não encontrado.');
+    if (m.storagePath) return res.redirect(302,await storageUrl(ctx.config,m.storagePath,ctx.fetch));
     if (m.blobUrl) return res.redirect(302, m.blobUrl);
     if (ctx.config.runtime === 'vercel') throw new AppError(410, 'Este arquivo existia somente no disco local. Use o original para publicar manualmente.', undefined, 'media_unavailable');
     if (req.query.download) res.attachment(m.originalName);
@@ -118,11 +120,11 @@ export function settingsRoutes(ctx: AppContext): Router {
       tiktokMode: tt === 'inbox' || tt === 'direct' ? tt : 'manual',
       graphVersion: ctx.config.meta.graphVersion,
       remoteAccess: ctx.config.runtime === 'vercel' || remote,
-      directLinks: ctx.config.mediaStorage === 'blob' || !!ctx.config.publicBaseUrl,
+      directLinks: ctx.config.mediaStorage === 'supabase' || !!ctx.config.publicBaseUrl,
       serverPersistence: hasPersistence(ctx),
       mediaPersistence: hasMediaStorage(ctx),
       oauthAvailable: hasPersistence(ctx) && ctx.vault.available,
-      backgroundWorker: ctx.config.runtime !== 'vercel',
+      backgroundWorker: false,
     };
   };
   r.get('/settings', (_req, res) => {
@@ -188,7 +190,7 @@ export function connectionRoutes(ctx: AppContext): Router {
     const ret = String(req.query.return ?? '');
     const returnTo = allowedOrigins(ctx).includes(ret) ? ret : ctx.config.webOrigin;
     const nonce = crypto.randomBytes(24).toString('base64url');
-    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ nonce, platform: p, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
+    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ ownerId: ctx.ownerId, nonce, platform: p, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
     let state: string;
     let url: string;
     if (platform === 'youtube') {
@@ -214,10 +216,10 @@ export function connectionRoutes(ctx: AppContext): Router {
     requireOAuth(ctx);
     const platform = String(req.params.platform);
     const state = String(req.query.state ?? '');
-    let pending: { nonce: string; platform: string; verifier?: string; createdAt: number; returnTo: string } | undefined;
+    let pending: { ownerId?: string; nonce: string; platform: string; verifier?: string; createdAt: number; returnTo: string } | undefined;
     try { pending = ctx.vault.decrypt(state, 'oauth-state'); } catch {}
     const back = (q: string) => res.redirect(302, `${pending?.returnTo ?? ctx.config.webOrigin}/#/conexoes?${q}`);
-    if (!pending || pending.platform !== platform || Date.now() - pending.createdAt > OAUTH_TTL) {
+    if (!pending || pending.ownerId !== ctx.ownerId || pending.platform !== platform || Date.now() - pending.createdAt > OAUTH_TTL) {
       res.status(400).json({ error: 'Estado OAuth inválido ou expirado. Volte ao aplicativo e tente conectar novamente.', code: 'invalid_oauth_state' });
       return;
     }
