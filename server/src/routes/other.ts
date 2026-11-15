@@ -1,4 +1,5 @@
 import { storageUrl } from '../lib/supabase.js';
+import { connectionBlockers } from '../lib/connection-readiness.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Router } from 'express';
@@ -169,28 +170,42 @@ export function connectionRoutes(ctx: AppContext): Router {
     const mc = ctx.current();
     res.json(await Promise.all(PLATFORMS.map(async (p) => {
       const c = await adapterFor(ctx, mc.mode, p).connection(mc);
+      const blockers = connectionBlockers(ctx, p, res.locals.storageWarning);
       const limitations: string[] = [];
-      if (!hasPersistence(ctx)) limitations.push('Sem persistência no servidor, esta tela não salva conexões OAuth. Use a publicação manual; a agenda fica neste navegador.');
-      else if (!ctx.vault.available) limitations.push('Tokens existentes foram preservados. Para usar OAuth, configure TOKEN_ENCRYPTION_KEY com 32 bytes em base64.');
-      if (res.locals.storageWarning) limitations.push(res.locals.storageWarning);
+      const stored = mc.connections.get()[p === 'instagram' ? 'facebook' : p];
+      let tokenUnreadable = false;
+      if (stored?.tokensEnc && ctx.vault.available) {
+        try { ctx.vault.decrypt(stored.tokensEnc, p === 'instagram' ? 'facebook' : p); }
+        catch {
+          tokenUnreadable = true;
+          limitations.push('A autorização salva usa outra chave. Restaure a chave anterior ou reconecte a conta. Nenhum token foi apagado.');
+        }
+      }
       if (ctx.config.runtime === 'vercel') limitations.push(p === 'youtube' || p === 'facebook'
         ? 'Agendamento nativo é mantido quando confirmado pela plataforma. Prepare/retome o envio pelo botão na Agenda; não há fila automática futura.'
         : 'Nesta versão, publique manualmente na plataforma. Não há processo automático no horário planejado.');
-      return { ...c, canConnect: c.configured && hasPersistence(ctx) && ctx.vault.available && !res.locals.storageWarning,
+      if (p === 'instagram' && stored?.tokensEnc && !c.connected) limitations.push('Selecione no cartão do Facebook a Página vinculada ao Instagram profissional.');
+      return { ...c, needsReconnect: tokenUnreadable || c.needsReconnect,
+        canConnect: blockers.length === 0, blockers,
         capabilities: ctx.config.runtime === 'vercel' ? c.capabilities.filter(k => !['queue', 'queue_fallback', 'inbox', 'direct'].includes(k)) : c.capabilities,
-        notes: [...limitations, ...c.notes] };
+        notes: [...blockers, ...limitations, ...c.notes] };
     })));
   }));
 
-  r.get('/connections/:platform/start', ah(async (req, res) => {
+  // POST faz preflight em JSON; GET continua atendendo links existentes.
+  r.route('/connections/:platform/start').all(ah(async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'POST') throw new AppError(405, 'Método não permitido.');
     requireOAuth(ctx);
     if (ctx.settings.get().mode !== 'real') throw new AppError(409, 'Desative o modo demonstração para conectar contas reais.');
     const platform = String(req.params.platform) as Platform;
+    if (!PLATFORMS.includes(platform)) throw new AppError(404, 'Plataforma desconhecida.');
+    const blockers = connectionBlockers(ctx, platform);
+    if (blockers.length) throw new AppError(409, blockers.join(' '), undefined, 'connection_not_ready');
     if (!ctx.vault.available) throw new AppError(409, 'Defina TOKEN_ENCRYPTION_KEY no .env antes de conectar contas.');
-    const ret = String(req.query.return ?? '');
+    const ret = String(req.method === 'POST' ? req.body?.returnTo ?? '' : req.query.return ?? '');
     const returnTo = allowedOrigins(ctx).includes(ret) ? ret : ctx.config.webOrigin;
     const nonce = crypto.randomBytes(24).toString('base64url');
-    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ ownerId: ctx.ownerId, nonce, platform: p, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
+    const pack = (p: string, verifier?: string) => ctx.vault.encrypt({ ownerId: ctx.ownerId, nonce, platform: p, requestedPlatform: platform, verifier, createdAt: Date.now(), returnTo }, 'oauth-state');
     let state: string;
     let url: string;
     if (platform === 'youtube') {
@@ -209,14 +224,15 @@ export function connectionRoutes(ctx: AppContext): Router {
       state = pack(platform);
       url = tiktokAuthUrl(ctx, state);
     } else throw new AppError(404, 'Plataforma desconhecida.');
-    res.redirect(302, url);
+    if (req.method === 'POST') res.json({ url });
+    else res.redirect(302, url);
   }));
 
   r.get('/oauth/:platform/callback', ah(async (req, res) => {
     requireOAuth(ctx);
     const platform = String(req.params.platform);
     const state = String(req.query.state ?? '');
-    let pending: { ownerId?: string; nonce: string; platform: string; verifier?: string; createdAt: number; returnTo: string } | undefined;
+    let pending: { ownerId?: string; nonce: string; platform: string; requestedPlatform?: Platform; verifier?: string; createdAt: number; returnTo: string } | undefined;
     try { pending = ctx.vault.decrypt(state, 'oauth-state'); } catch {}
     const back = (q: string) => res.redirect(302, `${pending?.returnTo ?? ctx.config.webOrigin}/#/conexoes?${q}`);
     if (!pending || pending.ownerId !== ctx.ownerId || pending.platform !== platform || Date.now() - pending.createdAt > OAUTH_TTL) {
@@ -231,14 +247,15 @@ export function connectionRoutes(ctx: AppContext): Router {
       return true;
     });
     if (!consumed) throw new AppError(400, 'Estado OAuth já utilizado.', undefined, 'invalid_oauth_state');
-    if (req.query.error) return back(`erro=${encodeURIComponent(String(req.query.error_description ?? req.query.error))}`);
+    if (req.query.error) return back(`erro=${encodeURIComponent(req.query.error === 'access_denied' ? 'cancelado' : String(req.query.error_description ?? req.query.error))}`);
     const code = String(req.query.code ?? '');
+    if (!code) return back(`erro=${encodeURIComponent('A rede não retornou a autorização. Entre novamente para conectar a conta.')}`);
     try {
       const mc = ctx.modes.real;
       if (platform === 'youtube') await youtubeExchange(ctx, mc, code, pending.verifier!);
       else if (platform === 'facebook') await metaExchange(ctx, mc, code);
       else if (platform === 'tiktok') await tiktokExchange(ctx, mc, code);
-      back(`conectado=${platform}`);
+      back(`conectado=${platform}${pending.requestedPlatform === 'instagram' ? '&origem=instagram' : ''}`);
     } catch (err: any) {
       log.error(`OAuth ${platform}:`, err.message);
       back(`erro=${encodeURIComponent(err.message)}`);

@@ -406,3 +406,63 @@ describe('login e agenda no Supabase',()=>{
   window.history.replaceState({},'','/privacidade');await render(<App/>);expect(host.textContent).toContain('Política de Privacidade');expect(api.session).not.toHaveBeenCalled();window.history.replaceState({},'','/');
  });
 });
+describe('conexoes OAuth por plataforma',()=>{
+ it('habilita as quatro contas, inclusive Instagram via Facebook, e mostra falha sem sair da tela',async()=>{
+  vi.spyOn(api,'connections').mockResolvedValue(PLATFORMS.map(platform=>({platform,configured:true,connected:false,canConnect:true,blockers:[],capabilities:[],notes:[]})));
+  const start=vi.spyOn(api,'startConnection').mockRejectedValue(new Error('Falha ao iniciar a autorizacao. Tente novamente.'));
+  await render(<Connections settings={settings}/>);
+  expect(host.querySelectorAll('.connection-actions button.primary')).toHaveLength(4);
+  expect([...host.querySelectorAll<HTMLButtonElement>('.connection-actions button.primary')].every(b=>!b.disabled)).toBe(true);
+  expect(host.textContent).not.toContain('Configura\u00e7\u00e3o pendente');
+  await click('.conn.instagram .connection-actions button.primary');expect(start).toHaveBeenCalledWith('instagram');
+  expect(host.querySelector('.conn.instagram [role=alert]')?.textContent).toContain('Falha ao iniciar');
+  expect(host.querySelector('.conn.youtube [role=alert]')).toBeNull();
+  expect(host.querySelector<HTMLButtonElement>('.conn.instagram button.primary')?.disabled).toBe(false);
+ });
+ it('mostra o requisito exato junto do botao bloqueado e permite verificar novamente',async()=>{
+  const load=vi.spyOn(api,'connections').mockResolvedValue([{platform:'youtube',configured:true,connected:false,canConnect:false,blockers:['Confira TOKEN_ENCRYPTION_KEY na Vercel.'],capabilities:[],notes:[]}]);
+  await render(<Connections settings={settings}/>);
+  expect(host.querySelector('.connection-limit')?.textContent).toContain('TOKEN_ENCRYPTION_KEY');
+  expect(host.querySelector<HTMLButtonElement>('button.primary')?.disabled).toBe(true);
+  expect(host.textContent).toContain('Configura\u00e7\u00e3o pendente');
+  await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='Verificar configura\u00e7\u00e3o novamente')!.click());expect(load).toHaveBeenCalledTimes(2);
+ });
+});
+describe('login oficial nas redes',()=>{
+ it('abre o login oficial para cada rede na mesma aba',async()=>{
+  vi.spyOn(api,'connections').mockResolvedValue(PLATFORMS.map(platform=>({platform,configured:true,connected:false,canConnect:true,capabilities:[],notes:[]})));
+  const urls={youtube:'https://accounts.google.com/o/oauth2/v2/auth?state=test',facebook:'https://www.facebook.com/v27.0/dialog/oauth?state=test',instagram:'https://www.facebook.com/v27.0/dialog/oauth?state=instagram',tiktok:'https://www.tiktok.com/v2/auth/authorize/?state=test'};
+  const start=vi.spyOn(api,'startConnection').mockImplementation(async platform=>({url:urls[platform]}));
+  const redirect=vi.spyOn(window.location,'assign').mockImplementation(()=>{});
+  await render(<Connections settings={settings}/>);
+  expect(host.querySelector('.conn.youtube button.primary')?.textContent).toBe('Entrar com Google');
+  expect(host.querySelector('.conn.instagram button.primary')?.textContent).toBe('Entrar com Facebook');
+  for(const platform of PLATFORMS){await click(`.conn.${platform} .connection-actions button.primary`);expect(start).toHaveBeenLastCalledWith(platform);expect(redirect).toHaveBeenLastCalledWith(urls[platform]);}
+ });
+ it('confirma sucesso apenas depois de ler a conta persistida',async()=>{
+  window.location.hash='#/conexoes?conectado=youtube';
+  const base={platform:'youtube' as const,configured:true,connected:false,canConnect:true,capabilities:[],notes:[]};
+  const load=vi.spyOn(api,'connections').mockResolvedValue([base]);
+  await render(<Connections settings={settings}/>);expect(host.querySelector('.alert.success')).toBeNull();
+  load.mockResolvedValue([{...base,connected:true,accountName:'Canal confirmado'}]);
+  await render(<Connections key="confirmed" settings={settings}/>);expect(host.querySelector('.alert.success')?.textContent).toContain('Canal confirmado');
+ });
+ it('conclui a vincula\u00e7\u00e3o do Instagram pela P\u00e1gina sem refazer o login',async()=>{
+  window.location.hash='#/conexoes?conectado=facebook&origem=instagram';
+  const fb={platform:'facebook' as const,configured:true,connected:true,canConnect:true,capabilities:[],notes:[],pages:[{id:'page-ig',name:'Minha pagina',instagram:{id:'ig',username:'meu_perfil'}},{id:'other',name:'Outra pagina',instagram:null}]};
+  const ig={platform:'instagram' as const,configured:true,connected:false,canConnect:true,capabilities:[],notes:[]};
+  vi.spyOn(api,'connections').mockResolvedValueOnce([fb,ig]).mockResolvedValue([{...fb,selectedPageId:'page-ig'},{...ig,connected:true,accountName:'@meu_perfil'}]);
+  const select=vi.spyOn(api,'selectPage').mockResolvedValue({...fb,selectedPageId:'page-ig'});
+  await render(<Connections settings={settings}/>);expect(host.querySelector('.alert.success')).toBeNull();
+  const field=host.querySelector<HTMLSelectElement>('#instagram-page')!;
+  expect([...field.options].map(x=>x.value)).toEqual(['','page-ig']);
+  await act(async()=>{field.value='page-ig';field.dispatchEvent(new Event('change',{bubbles:true}));});
+  expect(select).toHaveBeenCalledWith('page-ig');expect(host.querySelector('.alert.success')?.textContent).toContain('@meu_perfil');
+ });
+ it('mostra cancelamento sem apagar a conta ja conectada',async()=>{
+  window.location.hash='#/conexoes?erro=cancelado';
+  vi.spyOn(api,'connections').mockResolvedValue([{platform:'youtube',configured:true,connected:true,canConnect:true,accountName:'Canal existente',capabilities:[],notes:[]}]);
+  await render(<Connections settings={settings}/>);
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('cancelou');expect(host.textContent).toContain('Canal existente');
+ });
+});

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import crypto from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // server/src -> raiz do projeto (também funciona a partir de server/dist)
@@ -102,7 +103,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     tokenKey: str('TOKEN_ENCRYPTION_KEY'),
     publicBaseUrl: str('PUBLIC_BASE_URL').replace(/\/+$/, ''),
     mediaLinkTtlMinutes: num('MEDIA_LINK_TTL_MINUTES', 120),
-    appUrl: (str('APP_URL') || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '')).replace(/\/+$/, ''),
+    appUrl: (str('APP_URL') || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : '') || (vercel ? 'https://agendador-junior.vercel.app' : '')).replace(/\/+$/, ''),
     runtime: vercel ? 'vercel' : 'local',
     storage: str('SUPABASE_URL') ? 'supabase' : 'file',
     adminEmail: str('Login_ADM').trim().toLowerCase(),
@@ -145,5 +146,14 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
     if (!process.env.TIKTOK_REDIRECT_URI) base.tiktok.redirectUri = cb('tiktok');
     if (!process.env.WEB_ORIGIN) base.webOrigin = base.appUrl;
   }
-  return { ...base, ...overrides };
+  const config = { ...base, ...overrides };
+  // Preserve a chave dedicada já usada por tokens antigos. Projetos novos não
+  // precisam cadastrar outro segredo além do Supabase: HKDF separa os usos.
+  if (!config.tokenKey && config.storage === 'supabase' && config.supabase.secretKey) {
+    config.tokenKey = Buffer.from(crypto.hkdfSync(
+      'sha256', Buffer.from(config.supabase.secretKey, 'utf8'), Buffer.alloc(0),
+      'agendador-junior:oauth-encryption:v1', 32,
+    )).toString('base64');
+  }
+  return config;
 }

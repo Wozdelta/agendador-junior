@@ -68,6 +68,11 @@ export async function makeEnv(opts: { dir?: string; mode?: 'demo' | 'real'; cloc
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'agendador-teste-'));
   const clock = opts.clock ?? new TestClock();
   const config = loadConfig({
+    // Testes legados não devem herdar o banco ou o Storage do .env pessoal.
+    runtime: 'local',
+    storage: 'file',
+    mediaStorage: 'disk',
+    supabase: { url: '', publishableKey: '', secretKey: '' },
     dataDir: dir,
     tokenKey: Buffer.alloc(32, 7).toString('base64'),
     workerTickMs: 1_000_000,

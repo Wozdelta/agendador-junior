@@ -36,7 +36,7 @@ export function youtubeAuthUrl(ctx: AppContext, state: string, challenge: string
     response_type: 'code',
     scope: YOUTUBE_SCOPES.join(' '),
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
     include_granted_scopes: 'true',
     state,
     code_challenge: challenge,

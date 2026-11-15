@@ -173,6 +173,8 @@ export type TaskAction =
 
 export interface ConnectionDTO {
   canConnect?: boolean;
+  /** Motivos acionáveis; nunca inclui valores de credenciais. */
+  blockers?: string[];
   platform: Platform;
   configured: boolean; // credenciais do app presentes no .env
   connected: boolean;

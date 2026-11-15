@@ -54,7 +54,7 @@ describe('API na Vercel sem proxy', () => {
     const second = request(createApp(c2,(_req,_res,next)=>{c2.ownerId=e.ctx.ownerId;next();}));
     const cb = `/api/oauth/tiktok/callback?state=${encodeURIComponent(state)}&error=access_denied`;
     const back = await second.get(cb).expect(302);
-    expect(back.headers.location).toContain('erro=access_denied');
+    expect(back.headers.location).toContain('erro=cancelado');
     await second.get(cb).expect(400).expect('Content-Type', /json/);
     await second.get('/api/oauth/tiktok/callback?state=invalid&code=x').expect(400);
     const expired = c2.vault.encrypt({ nonce: 'expired', platform: 'tiktok', createdAt: Date.now() - 700000, returnTo: APP }, 'oauth-state');

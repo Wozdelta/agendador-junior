@@ -15,6 +15,12 @@ const CAP_LABEL: Record<string, string> = {
   inbox: 'Caixa de entrada',
   direct: 'Direct Post',
 };
+const LOGIN_LABEL: Record<Platform, string> = {
+  youtube: 'Entrar com Google',
+  facebook: 'Entrar com Facebook',
+  instagram: 'Entrar com Facebook',
+  tiktok: 'Entrar com TikTok',
+};
 export function Connections({ settings }: { settings: SettingsDTO }) {
   const [list, setList] = useState<ConnectionDTO[]>([]),
     [error, setError] = useState<string | null>(null),
@@ -24,6 +30,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
   const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
   const [flash] = useState(params.get('conectado')),
     [flashErr] = useState(params.get('erro'));
+  const [origin] = useState(params.get('origem'));
   const load = async () => {
     setError(null);
     setLoading(true);
@@ -39,6 +46,21 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
     void load();
   }, []);
   const demo = settings.mode === 'demo';
+  const meta = list.find(c => c.platform === 'facebook');
+  const returnedPlatform = origin === 'instagram' ? 'instagram' : flash;
+  const verifiedConnection = list.find(c => c.platform === returnedPlatform && c.connected && !c.needsReconnect);
+  const connect = async (platform: Platform) => {
+    setBusy(platform);
+    setCardErrors(previous => ({...previous, [platform]:undefined}));
+    try {
+      const {url} = await api.startConnection(platform);
+      window.location.assign(url);
+    } catch (err:any) {
+      setCardErrors(previous => ({...previous, [platform]:err.message}));
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <div className="connections-page">
       <div className="page-heading">
@@ -47,7 +69,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
           <h1>
             Conexões<span className="accent-dot">.</span>
           </h1>
-          <p>Conecte suas contas. Ou siga no seu ritmo, com publicação manual.</p>
+          <p>Entre nas suas redes e autorize o Agendador a conectar suas contas.</p>
         </div>
         <span className="context-badge">
           <Icon name="link" size={15} />
@@ -57,16 +79,28 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
       {demo && (
         <div className="alert demo">Modo demonstração: contas e publicações são simuladas.</div>
       )}
-      {flash && (
+      <div className="work-panel connection-login-guide">
+        <strong>Conecte em três passos</strong>
+        <p>Escolha uma rede, faça login na página oficial e permita o acesso. Depois, você volta para cá com a conta vinculada.</p>
+        <p className="muted">Digite a senha da rede somente no site oficial. Para Instagram, entre pelo Facebook e selecione a Página vinculada ao perfil profissional.</p>
+      </div>
+      {flash && !loading && !error && !flashErr && verifiedConnection && (
         <div className="alert success" role="status">
           <Icon name="check" />
-          Conta conectada com sucesso: {flash}.
+          Conta conectada: {PLATFORM_LABEL[verifiedConnection.platform]}{verifiedConnection.accountName ? ` · ${verifiedConnection.accountName}` : ''}.
+        </div>
+      )}
+      {flash && !loading && !error && !flashErr && !verifiedConnection && (
+        <div className="alert" role="status">
+          {origin === 'instagram' && meta?.connected
+            ? 'Facebook autorizado. Selecione abaixo a Página vinculada ao seu Instagram para concluir a conexão.'
+            : 'A autorização retornou, mas a conta ainda não está pronta. Confira o cartão da rede e entre novamente se necessário.'}
         </div>
       )}
       {flashErr && (
         <div className="alert error" role="alert">
           <Icon name="info" />
-          <span>A conexão não foi concluída: {flashErr}. Tente conectar novamente.</span>
+          <span>{flashErr === 'cancelado' ? 'Você cancelou a autorização. Sua conexão anterior foi preservada; use Entrar novamente quando quiser.' : `A conexão não foi concluída: ${flashErr}. Tente conectar novamente.`}</span>
         </div>
       )}
       {error && (
@@ -92,15 +126,18 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
             ))
           : list.map((c) => {
               const canConnect = c.canConnect ?? c.configured;
+              const pageOptions = c.platform === 'instagram'
+                ? meta?.pages?.filter(page => page.instagram)
+                : c.pages;
+              const selectedPage = c.platform === 'instagram' ? meta?.selectedPageId : c.selectedPageId;
+              const pageField = c.platform === 'instagram' ? 'instagram-page' : 'facebook-page';
               const status = c.needsReconnect
                 ? 'Reconectar'
                 : c.connected
                   ? 'Conectado'
                   : canConnect
                     ? 'Desconectado'
-                    : c.configured || c.platform === 'tiktok'
-                      ? 'Manual'
-                      : 'Indisponível';
+                    : 'Configuração pendente';
               return (
                 <section
                   key={c.platform}
@@ -132,13 +169,13 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                       'Seu conteúdo pronto para chegar à próxima audiência.'
                     )}
                   </p>
-                  {c.platform === 'facebook' && c.pages && (
+                  {(c.platform === 'facebook' || c.platform === 'instagram') && !!pageOptions?.length && (
                     <div className="field">
-                      <label htmlFor="facebook-page">Página de destino</label>
+                      <label htmlFor={pageField}>{c.platform === 'instagram' ? 'Página vinculada ao Instagram' : 'Página de destino'}</label>
                       <select
-                        id="facebook-page"
-                        disabled={demo || busy === c.platform}
-                        value={c.selectedPageId ?? ''}
+                        id={pageField}
+                        disabled={demo || busy !== null}
+                        value={pageOptions.some(p => p.id === selectedPage) ? selectedPage : ''}
                         onChange={async (e) => {
                           setBusy(c.platform);
                           try {
@@ -156,7 +193,7 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                         }}
                       >
                         <option value="">Escolha uma Página…</option>
-                        {c.pages.map((p) => (
+                        {pageOptions.map((p) => (
                           <option key={p.id} value={p.id}>
                             {p.name}
                             {p.instagram ? ` · @${p.instagram.username}` : ''}
@@ -164,6 +201,12 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                         ))}
                       </select>
                     </div>
+                  )}
+                  {c.platform === 'facebook' && c.connected && !c.pages?.length && (
+                    <p className="connection-limit">O Facebook foi autorizado, mas não retornou Páginas. Entre novamente e permita o acesso à Página que você administra.</p>
+                  )}
+                  {c.platform === 'instagram' && meta?.connected && !pageOptions?.length && (
+                    <p className="connection-limit">Nenhuma Página com Instagram profissional foi retornada. Vincule o perfil profissional à Página no Facebook e autorize novamente.</p>
                   )}
                   <div className="connection-caps">
                     {c.capabilities.length ? (
@@ -183,27 +226,25 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                   {cardErrors[c.platform] && (
                     <div className="alert error" role="alert">
                       {cardErrors[c.platform]}{' '}
-                      <button className="link" onClick={load}>
+                      <button className="link" disabled={busy !== null} onClick={() => void connect(c.platform)}>
                         Tentar de novo
                       </button>
                     </div>
                   )}
                   <div className="connection-actions">
-                    {!demo && c.platform !== 'instagram' && (
+                    {!demo && (
                       <button
                         className="primary"
-                        disabled={!canConnect || busy === c.platform}
+                        disabled={!canConnect || busy !== null}
                         title={
                           !canConnect
                             ? 'Consulte os requisitos em “Sobre esta conexão”. A publicação manual está disponível.'
                             : undefined
                         }
-                        onClick={() => {
-                          window.location.href = `/api/connections/${c.platform}/start?return=${encodeURIComponent(window.location.origin)}`;
-                        }}
+                        onClick={() => void connect(c.platform)}
                       >
                         <Icon name="link" size={16} />
-                        {c.connected ? 'Reconectar conta' : 'Conectar conta'}
+                        {busy === c.platform ? 'Abrindo login…' : c.connected ? 'Reconectar conta' : LOGIN_LABEL[c.platform]}
                       </button>
                     )}
                     <a
@@ -216,11 +257,12 @@ export function Connections({ settings }: { settings: SettingsDTO }) {
                       <Icon name="arrow" size={15} />
                     </a>
                   </div>
-                  {!canConnect && !c.connected && (
-                    <p className="connection-limit">
-                      A conexão automática não está disponível nesta configuração. Sua agenda manual
-                      continua funcionando.
-                    </p>
+                  {!canConnect && (
+                    <div className="connection-limit" role="status">
+                      {c.blockers?.length ? c.blockers.map((reason,i)=><p key={i}>{reason}</p>) :
+                        <p>Confira os requisitos em Sobre esta conexão e tente atualizar.</p>}
+                      <button className="small" disabled={loading} onClick={load}>Verificar configuração novamente</button>
+                    </div>
                   )}
                   <details className="connection-details">
                     <summary>

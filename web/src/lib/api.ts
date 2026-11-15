@@ -99,6 +99,7 @@ export const api = {
   editTask: (id: string, body: { title?: string; description?: string }, idem: string) => call<TaskDTO>('PATCH', `/api/tasks/${id}`, body, { idem }),
 
   connections: () => call<ConnectionDTO[]>('GET', '/api/connections'),
+  startConnection: (platform: Platform) => call<{url:string}>('POST', `/api/connections/${platform}/start`, {returnTo:window.location.origin}),
   selectPage: (pageId: string) => call<ConnectionDTO>('POST', '/api/connections/facebook/page', { pageId }),
   disconnect: (platform: Platform) => call('POST', `/api/connections/${platform}/disconnect`, {}),
   creatorInfo: () => call<{ privacy_level_options: string[]; creator_nickname?: string; max_video_post_duration_sec?: number; comment_disabled?: boolean; duet_disabled?: boolean; stitch_disabled?: boolean }>('GET', '/api/connections/tiktok/creator-info'),
