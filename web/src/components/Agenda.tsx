@@ -6,8 +6,20 @@ import { api, downloadUrl, idemKey, type DraftAgendaRow } from '../lib/api';
 import { isValidBrDate } from '../lib/date';
 import { DateField } from './DateField';
 import { ManualAgenda } from './ManualAgenda';
+import { useDialogFocus } from './ui/useDialogFocus';
+import { Icon } from './ui/Icon';
 
-const ORDER: TaskState[] = ['draft', 'queued', 'processing', 'scheduled_remote', 'published', 'manual_action', 'late', 'failed', 'cancelled'];
+const ORDER: TaskState[] = [
+  'draft',
+  'queued',
+  'processing',
+  'scheduled_remote',
+  'published',
+  'manual_action',
+  'late',
+  'failed',
+  'cancelled',
+];
 
 const COVER_LABEL: Record<string, string> = {
   none: 'sem capa personalizada',
@@ -21,7 +33,8 @@ const COVER_LABEL: Record<string, string> = {
 function stateLabel(t: TaskDTO): string {
   if (t.state === 'manual_action') {
     if (t.manualReason === 'tiktok_inbox') return 'Ação manual necessária · Enviado ao TikTok';
-    if (t.manualReason === 'review_unknown') return 'Ação manual necessária · Revisar na plataforma';
+    if (t.manualReason === 'review_unknown')
+      return 'Ação manual necessária · Revisar na plataforma';
   }
   if (t.state === 'published' && t.publishedManually) return 'Publicado (registro manual)';
   return TASK_STATE_LABEL[t.state];
@@ -34,7 +47,12 @@ type Dialog =
   | { kind: 'review'; task: TaskDTO; key: string };
 
 export function Agenda({ settings }: { settings: SettingsDTO }) {
-  return <><h1>Agenda</h1><ManualAgenda />{settings.serverPersistence && <ServerAgenda settings={settings} />}</>;
+  return (
+    <>
+      <ManualAgenda view="agenda" />
+      {settings.serverPersistence && <ServerAgenda settings={settings} />}
+    </>
+  );
 }
 
 function ServerAgenda({ settings }: { settings: SettingsDTO }) {
@@ -45,6 +63,12 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  useEffect(() => {
+    if (!info) return;
+    const timer = window.setTimeout(() => setInfo(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [info]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -95,26 +119,62 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
       <div className="page-head">
         <h2>Registros do servidor</h2>
         <p className="muted">
-          {settings.backgroundWorker ? 'A fila local processa enquanto o servidor estiver ligado.' : 'Não há fila automática nesta versão. Prepare envios nativos pelo botão abaixo; só o status “Agendado na plataforma” confirma a publicação futura sem o app aberto. As demais redes são manuais.'}
+          {settings.backgroundWorker
+            ? 'A fila local processa enquanto o servidor estiver ligado.'
+            : 'Não há fila automática nesta versão. Prepare envios nativos pelo botão abaixo; só o status “Agendado na plataforma” confirma a publicação futura sem o app aberto. As demais redes são manuais.'}
         </p>
       </div>
-      {!settings.backgroundWorker && <button disabled={!!busy || !settings.oauthAvailable} onClick={async () => {
-        setBusy('native'); setError(null);
-        try { const r = await api.processNative(); window.alert(r.message); await load(); }
-        catch (err: any) { setError(err.message); }
-        finally { setBusy(null); }
-      }}>Preparar / retomar agendamentos nativos</button>}
+      {!settings.backgroundWorker && (
+        <button
+          className="primary server-action"
+          disabled={!!busy || !settings.oauthAvailable}
+          onClick={async () => {
+            setBusy('native');
+            setError(null);
+            setInfo(null);
+            try {
+              const r = await api.processNative();
+              setInfo(r.message);
+              await load();
+            } catch (err: any) {
+              setError(err.message);
+            } finally {
+              setBusy(null);
+            }
+          }}
+        >
+          <Icon name={busy === 'native' ? 'clock' : 'calendar'} size={17} />
+          {busy === 'native' ? 'Preparando envios…' : 'Preparar / retomar agendamentos nativos'}
+        </button>
+      )}
+      {info && (
+        <div className="alert success server-notice" role="status">
+          <Icon name="check" />
+          {info}
+        </div>
+      )}
       {error && (
         <div className="alert error" role="alert">
-          {error} <button className="link" onClick={load}>Tentar de novo</button>
+          {error}{' '}
+          <button className="link" onClick={load}>
+            Tentar de novo
+          </button>
         </div>
       )}
       <div className="filters" role="toolbar" aria-label="Filtrar por estado">
-        <button className={filter === 'all' ? 'chip active' : 'chip'} onClick={() => setFilter('all')}>
+        <button
+          className={filter === 'all' ? 'chip active' : 'chip'}
+          onClick={() => setFilter('all')}
+        >
           Todos ({tasks.length})
         </button>
         {ORDER.map((s) => (
-          <button key={s} className={filter === s ? `chip st-${s} active` : `chip st-${s}`} onClick={() => setFilter(s)} disabled={!counts[s]}>
+          <button
+            key={s}
+            className={filter === s ? `chip st-${s} active` : `chip st-${s}`}
+            onClick={() => setFilter(s)}
+            disabled={!counts[s]}
+          >
             {TASK_STATE_LABEL[s]} ({counts[s] ?? 0})
           </button>
         ))}
@@ -126,15 +186,19 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
           <ul className="draft-rows">
             {drafts.map((d) => (
               <li key={d.itemId}>
-                <span className="badge st-draft">Rascunho</span> {d.plannedLocal} · {d.originalName} · {d.platforms.map((p) => PLATFORM_LABEL[p]).join(', ')}{' '}
-                <a href="#/novo">abrir</a>
+                <span className="badge st-draft">Rascunho</span> {d.plannedLocal} · {d.originalName}{' '}
+                · {d.platforms.map((p) => PLATFORM_LABEL[p]).join(', ')} <a href="#/novo">abrir</a>
               </li>
             ))}
           </ul>
         </section>
       )}
 
-      {shown.length === 0 && filter !== 'draft' && <p className="empty">Nenhuma tarefa {filter === 'all' ? 'agendada ainda' : 'neste estado'}.</p>}
+      {shown.length === 0 && filter !== 'draft' && (
+        <p className="empty">
+          Nenhuma tarefa {filter === 'all' ? 'agendada ainda' : 'neste estado'}.
+        </p>
+      )}
 
       {[...groups.entries()].map(([day, list]) => (
         <section key={day} className="day">
@@ -145,7 +209,8 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
                 <span className={`dot ${t.platform}`} />
                 <div className="task-info">
                   <div className="task-title">
-                    <strong>{PLATFORM_LABEL[t.platform]}</strong> · {t.accountName} · <span title={t.originalName}>{t.originalName}</span>
+                    <strong>{PLATFORM_LABEL[t.platform]}</strong> · {t.accountName} ·{' '}
+                    <span title={t.originalName}>{t.originalName}</span>
                     {t.mode === 'demo' && <span className="badge demo">DEMO</span>}
                   </div>
                   <div className="task-times">
@@ -153,19 +218,28 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
                       Planejado: <strong>{t.plannedLocal}</strong>
                     </span>
                     <span>Efetivo: {t.effectiveLocal ?? '—'}</span>
-                    {t.nativeSchedule && <span className="tag">agendamento nativo{t.remoteId ? ` · ID ${t.remoteId}` : ''}</span>}
+                    {t.nativeSchedule && (
+                      <span className="tag">
+                        agendamento nativo{t.remoteId ? ` · ID ${t.remoteId}` : ''}
+                      </span>
+                    )}
                     {t.attempts > 0 && <span className="tag warn">tentativas: {t.attempts}</span>}
                   </div>
                   <div className="task-sub">
                     <span>Vídeo: {t.videoUploaded ? 'enviado' : 'não enviado'}</span>
-                    {t.coverId || t.cover.state !== 'none' ? <span className={`cover-${t.cover.state}`}>{COVER_LABEL[t.cover.state]}</span> : null}
+                    {t.coverId || t.cover.state !== 'none' ? (
+                      <span className={`cover-${t.cover.state}`}>{COVER_LABEL[t.cover.state]}</span>
+                    ) : null}
                     {t.remoteUrl && (
                       <a href={t.remoteUrl} target="_blank" rel="noreferrer noopener">
                         abrir publicação
                       </a>
                     )}
                   </div>
-                  {t.cover.message && (t.cover.state === 'failed' || t.cover.state === 'manual') && <div className="note">{t.cover.message}</div>}
+                  {t.cover.message &&
+                    (t.cover.state === 'failed' || t.cover.state === 'manual') && (
+                      <div className="note">{t.cover.message}</div>
+                    )}
                   {t.delayNote && <div className="note warn">{t.delayNote}</div>}
                   {t.lastError && <div className="note err">{t.lastError}</div>}
                   {t.state === 'manual_action' && t.manualReason !== 'review_unknown' && (
@@ -176,27 +250,47 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
               </div>
               <div className="task-actions">
                 {t.actions.includes('manual_complete') && (
-                  <button className="primary small" disabled={busy === t.id} onClick={() => setDialog({ kind: 'complete', task: t, key: idemKey() })}>
+                  <button
+                    className="primary small"
+                    disabled={busy === t.id}
+                    onClick={() => setDialog({ kind: 'complete', task: t, key: idemKey() })}
+                  >
                     Registrar publicação
                   </button>
                 )}
                 {t.actions.includes('resolve_review') && (
-                  <button className="primary small" disabled={busy === t.id} onClick={() => setDialog({ kind: 'review', task: t, key: idemKey() })}>
+                  <button
+                    className="primary small"
+                    disabled={busy === t.id}
+                    onClick={() => setDialog({ kind: 'review', task: t, key: idemKey() })}
+                  >
                     Revisar resultado
                   </button>
                 )}
                 {t.actions.includes('retry') && (
-                  <button className="small" disabled={busy === t.id} onClick={() => run(t, () => api.taskAction(t.id, 'retry', {}, idemKey()))}>
+                  <button
+                    className="small"
+                    disabled={busy === t.id}
+                    onClick={() => run(t, () => api.taskAction(t.id, 'retry', {}, idemKey()))}
+                  >
                     Tentar novamente
                   </button>
                 )}
                 {t.actions.includes('edit') && (
-                  <button className="small" disabled={busy === t.id} onClick={() => setDialog({ kind: 'edit', task: t, key: idemKey() })}>
+                  <button
+                    className="small"
+                    disabled={busy === t.id}
+                    onClick={() => setDialog({ kind: 'edit', task: t, key: idemKey() })}
+                  >
                     Editar
                   </button>
                 )}
                 {t.actions.includes('reschedule') && (
-                  <button className="small" disabled={busy === t.id} onClick={() => setDialog({ kind: 'reschedule', task: t, key: idemKey() })}>
+                  <button
+                    className="small"
+                    disabled={busy === t.id}
+                    onClick={() => setDialog({ kind: 'reschedule', task: t, key: idemKey() })}
+                  >
                     Nova data
                   </button>
                 )}
@@ -205,14 +299,20 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
                     className="small danger"
                     disabled={busy === t.id}
                     onClick={() =>
-                      confirm(t.nativeSchedule ? 'Cancelar? O agendamento será removido na plataforma antes de marcar como cancelado.' : 'Cancelar esta publicação?') &&
-                      run(t, () => api.taskAction(t.id, 'cancel', {}, idemKey()))
+                      confirm(
+                        t.nativeSchedule
+                          ? 'Cancelar? O agendamento será removido na plataforma antes de marcar como cancelado.'
+                          : 'Cancelar esta publicação?',
+                      ) && run(t, () => api.taskAction(t.id, 'cancel', {}, idemKey()))
                     }
                   >
                     {busy === t.id ? 'Aguardando plataforma…' : 'Cancelar'}
                   </button>
                 )}
-                <button className="link" onClick={() => setExpanded(expanded === t.id ? null : t.id)}>
+                <button
+                  className="link"
+                  onClick={() => setExpanded(expanded === t.id ? null : t.id)}
+                >
                   {expanded === t.id ? 'ocultar histórico' : 'histórico'}
                 </button>
               </div>
@@ -220,7 +320,10 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
                 <ol className="history">
                   {t.history.map((h, i) => (
                     <li key={i}>
-                      <time>{new Date(h.at).toLocaleString('pt-BR', { timeZone: settings.timezone })}</time> {h.message}
+                      <time>
+                        {new Date(h.at).toLocaleString('pt-BR', { timeZone: settings.timezone })}
+                      </time>{' '}
+                      {h.message}
                     </li>
                   ))}
                 </ol>
@@ -230,7 +333,15 @@ function ServerAgenda({ settings }: { settings: SettingsDTO }) {
         </section>
       ))}
 
-      {dialog && <TaskDialog dialog={dialog} busy={busy === dialog.task.id} onClose={() => setDialog(null)} run={run} settings={settings} />}
+      {dialog && (
+        <TaskDialog
+          dialog={dialog}
+          busy={busy === dialog.task.id}
+          onClose={() => setDialog(null)}
+          run={run}
+          settings={settings}
+        />
+      )}
     </div>
   );
 }
@@ -285,6 +396,9 @@ function TaskDialog({
   settings: SettingsDTO;
 }) {
   const t = dialog.task;
+  useDialogFocus(true, () => {
+    if (!busy) onClose();
+  });
   const [date, setDate] = useState('');
   const [time, setTime] = useState(settings.publishTime);
   const [url, setUrl] = useState('');
@@ -312,7 +426,13 @@ function TaskDialog({
             </div>
             <div className="modal-actions">
               <button onClick={onClose}>Voltar</button>
-              <button className="primary" disabled={busy || !isValidBrDate(date)} onClick={() => run(t, () => api.taskAction(t.id, 'reschedule', { date, time }, dialog.key))}>
+              <button
+                className="primary"
+                disabled={busy || !isValidBrDate(date)}
+                onClick={() =>
+                  run(t, () => api.taskAction(t.id, 'reschedule', { date, time }, dialog.key))
+                }
+              >
                 {busy ? 'Confirmando…' : 'Reagendar'}
               </button>
             </div>
@@ -321,14 +441,28 @@ function TaskDialog({
         {dialog.kind === 'complete' && (
           <>
             <h2>Registrar publicação manual</h2>
-            <p>Confirme que você publicou este vídeo no {PLATFORM_LABEL[t.platform]}. O registro fica identificado como manual.</p>
+            <p>
+              Confirme que você publicou este vídeo no {PLATFORM_LABEL[t.platform]}. O registro fica
+              identificado como manual.
+            </p>
             <div className="field">
               <label>Link publicado (opcional)</label>
-              <input type="url" placeholder="https://www.tiktok.com/@…/video/…" value={url} onChange={(e) => setUrl(e.target.value)} />
+              <input
+                type="url"
+                placeholder="https://www.tiktok.com/@…/video/…"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
             </div>
             <div className="modal-actions">
               <button onClick={onClose}>Voltar</button>
-              <button className="primary" disabled={busy} onClick={() => run(t, () => api.taskAction(t.id, 'manual-complete', { url }, dialog.key))}>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() =>
+                  run(t, () => api.taskAction(t.id, 'manual-complete', { url }, dialog.key))
+                }
+              >
                 Marcar como publicado
               </button>
             </div>
@@ -338,8 +472,9 @@ function TaskDialog({
           <>
             <h2>Revisar resultado</h2>
             <p>
-              O app não conseguiu confirmar se a publicação foi criada no {PLATFORM_LABEL[t.platform]}. Verifique na plataforma e informe o que encontrou. Isso evita
-              publicar duas vezes.
+              O app não conseguiu confirmar se a publicação foi criada no{' '}
+              {PLATFORM_LABEL[t.platform]}. Verifique na plataforma e informe o que encontrou. Isso
+              evita publicar duas vezes.
             </p>
             <div className="field">
               <label>Link (se encontrou a publicação)</label>
@@ -347,10 +482,35 @@ function TaskDialog({
             </div>
             <div className="modal-actions">
               <button onClick={onClose}>Voltar</button>
-              <button disabled={busy} onClick={() => run(t, () => api.taskAction(t.id, 'resolve-review', { outcome: 'not_published' }, dialog.key))}>
+              <button
+                disabled={busy}
+                onClick={() =>
+                  run(t, () =>
+                    api.taskAction(
+                      t.id,
+                      'resolve-review',
+                      { outcome: 'not_published' },
+                      dialog.key,
+                    ),
+                  )
+                }
+              >
                 Não foi publicado — reenviar
               </button>
-              <button className="primary" disabled={busy} onClick={() => run(t, () => api.taskAction(t.id, 'resolve-review', { outcome: 'published', url }, dialog.key))}>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() =>
+                  run(t, () =>
+                    api.taskAction(
+                      t.id,
+                      'resolve-review',
+                      { outcome: 'published', url },
+                      dialog.key,
+                    ),
+                  )
+                }
+              >
                 Encontrei a publicação
               </button>
             </div>
@@ -369,7 +529,10 @@ function TaskDialog({
             {rules.title && (
               <div className="field">
                 <label>
-                  Título <span className="counter">{countText(title, rules.title.count)}/{rules.title.max}</span>
+                  Título{' '}
+                  <span className="counter">
+                    {countText(title, rules.title.count)}/{rules.title.max}
+                  </span>
                 </label>
                 <input value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
@@ -385,7 +548,13 @@ function TaskDialog({
             </div>
             <div className="modal-actions">
               <button onClick={onClose}>Voltar</button>
-              <button className="primary" disabled={busy} onClick={() => run(t, () => api.editTask(t.id, { title, description: desc }, dialog.key))}>
+              <button
+                className="primary"
+                disabled={busy}
+                onClick={() =>
+                  run(t, () => api.editTask(t.id, { title, description: desc }, dialog.key))
+                }
+              >
                 {busy ? 'Confirmando…' : 'Salvar'}
               </button>
             </div>

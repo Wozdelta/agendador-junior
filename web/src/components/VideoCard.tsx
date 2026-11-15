@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import type { BatchItemDTO, ConnectionDTO, Platform, PlatformTexts } from '../../../server/src/shared/types';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import type {
+  BatchItemDTO,
+  ConnectionDTO,
+  Platform,
+  PlatformTexts,
+} from '../../../server/src/shared/types';
 import { PLATFORM_LABEL } from '../../../server/src/shared/types';
 import { countText, RULES, validatePlatform } from '../../../server/src/shared/limits';
 import { downloadUrl } from '../lib/api';
@@ -32,7 +37,12 @@ interface Props {
 }
 
 const PLATFORM_ORDER: Platform[] = ['facebook', 'youtube', 'instagram', 'tiktok'];
-const KIND: Record<Platform, string> = { facebook: 'Reel', youtube: 'Short', instagram: 'Reel', tiktok: 'Vídeo' };
+const KIND: Record<Platform, string> = {
+  facebook: 'Reel',
+  youtube: 'Short',
+  instagram: 'Reel',
+  tiktok: 'Vídeo',
+};
 const PRIVACY_LABEL: Record<string, string> = {
   PUBLIC_TO_EVERYONE: 'Público',
   MUTUAL_FOLLOW_FRIENDS: 'Amigos',
@@ -40,14 +50,25 @@ const PRIVACY_LABEL: Record<string, string> = {
   SELF_ONLY: 'Somente eu',
 };
 
-function Counter({ text, platform, field }: { text: string; platform: Platform; field: 'title' | 'description' }) {
+function Counter({
+  text,
+  platform,
+  field,
+}: {
+  text: string;
+  platform: Platform;
+  field: 'title' | 'description';
+}) {
   const rule = field === 'title' ? RULES[platform].title : RULES[platform].description;
   if (!rule) return null;
   const n = countText(text, rule.count);
   const over = n > rule.max;
   const unit = rule.count === 'utf8bytes' ? ' bytes' : '';
   return (
-    <span className={over ? 'counter over' : n > rule.max * 0.9 ? 'counter near' : 'counter'} title={rule.source}>
+    <span
+      className={over ? 'counter over' : n > rule.max * 0.9 ? 'counter near' : 'counter'}
+      title={rule.source}
+    >
       {n.toLocaleString('pt-BR')}/{rule.max.toLocaleString('pt-BR')}
       {unit}
     </span>
@@ -61,15 +82,26 @@ function coverResult(p: Platform, item: BatchItemDTO, conn?: ConnectionDTO): str
   const hasImg = !!item.cover;
   switch (p) {
     case 'youtube':
-      return hasImg ? 'Imagem aplicada após o processamento (thumbnails.set)' : 'Capa automática do YouTube';
+      return hasImg
+        ? 'Imagem aplicada após o processamento (thumbnails.set)'
+        : 'Capa automática do YouTube';
     case 'facebook':
-      return hasImg ? (caps.includes('cover_image') ? 'Imagem enviada como capa do Reel' : 'Somente manual: a imagem fica disponível para você aplicar') : 'Capa automática da Meta';
+      return hasImg
+        ? caps.includes('cover_image')
+          ? 'Imagem enviada como capa do Reel'
+          : 'Somente manual: a imagem fica disponível para você aplicar'
+        : 'Capa automática da Meta';
     case 'instagram':
       if (hasImg && caps.includes('cover_image')) return 'Imagem enviada (cover_url)';
-      return hasImg ? `Usa o ${frame} (thumb_offset); imagem fica para uso manual` : `Usa o ${frame} (thumb_offset)`;
+      return hasImg
+        ? `Usa o ${frame} (thumb_offset); imagem fica para uso manual`
+        : `Usa o ${frame} (thumb_offset)`;
     case 'tiktok':
-      if (caps.includes('direct')) return `Usa o ${frame} (video_cover_timestamp_ms)${hasImg ? '; imagem para uso manual' : ''}`;
-      return hasImg ? 'Manual: escolha a capa no app do TikTok (imagem disponível)' : 'Manual: escolha a capa no app do TikTok';
+      if (caps.includes('direct'))
+        return `Usa o ${frame} (video_cover_timestamp_ms)${hasImg ? '; imagem para uso manual' : ''}`;
+      return hasImg
+        ? 'Manual: escolha a capa no app do TikTok (imagem disponível)'
+        : 'Manual: escolha a capa no app do TikTok';
   }
 }
 
@@ -102,21 +134,37 @@ export function VideoCard(props: Props) {
   const interrupted = !ready && !upload?.active;
 
   const issuesFor = (p: Platform) => validatePlatform(p, texts[p], item.media, item.id);
-  const conn = (p: Platform) => connections.find((c) => c.platform === (p === 'instagram' ? 'instagram' : p));
+  const conn = (p: Platform) =>
+    connections.find((c) => c.platform === (p === 'instagram' ? 'instagram' : p));
 
   return (
-    <article className={props.isDragOver ? 'video-card drag-over' : 'video-card'} aria-label={`Vídeo ${index + 1}: ${item.originalName}`}>
+    <article
+      className={props.isDragOver ? 'video-card drag-over' : 'video-card'}
+      aria-label={`Vídeo ${index + 1}: ${item.originalName}`}
+    >
       <div className="card-head" {...props.dragProps}>
-        <span className="drag-handle" title="Arraste para reordenar" aria-hidden>⠿</span>
+        <span className="drag-handle" title="Arraste para reordenar" aria-hidden>
+          ⠿
+        </span>
         <span className="order">#{index + 1}</span>
         <span className="when">
           <strong>{item.scheduledLocal}</strong> <small>(America/Sao_Paulo)</small>
         </span>
         <span className="spacer" />
-        <button className="small" onClick={() => props.onMove(item.id, -1)} disabled={index === 0} aria-label="Subir">
+        <button
+          className="small"
+          onClick={() => props.onMove(item.id, -1)}
+          disabled={index === 0}
+          aria-label="Subir"
+        >
           ↑ Subir
         </button>
-        <button className="small" onClick={() => props.onMove(item.id, 1)} disabled={index === total - 1} aria-label="Descer">
+        <button
+          className="small"
+          onClick={() => props.onMove(item.id, 1)}
+          disabled={index === total - 1}
+          aria-label="Descer"
+        >
           ↓ Descer
         </button>
         <button className="small danger" onClick={() => props.onRemove(item.id)}>
@@ -150,11 +198,19 @@ export function VideoCard(props: Props) {
               {upload?.active ? (
                 <>
                   <progress max={100} value={upload.pct} aria-label="Progresso do envio" />
-                  <span>{upload.pct < 100 ? `Enviando… ${upload.pct}%` : 'Verificando vídeo no servidor…'}</span>
+                  <span>
+                    {upload.pct < 100
+                      ? `Enviando… ${upload.pct}%`
+                      : 'Verificando vídeo no servidor…'}
+                  </span>
                 </>
               ) : (
                 <div className="field-error">
-                  {item.uploadError ?? upload?.error ?? (interrupted ? 'Envio interrompido (a página foi fechada). Selecione o arquivo de novo.' : '')}
+                  {item.uploadError ??
+                    upload?.error ??
+                    (interrupted
+                      ? 'Envio interrompido (a página foi fechada). Selecione o arquivo de novo.'
+                      : '')}
                 </div>
               )}
               {interrupted && (
@@ -162,7 +218,15 @@ export function VideoCard(props: Props) {
                   <button className="small" onClick={() => reuploadInput.current?.click()}>
                     Selecionar arquivo novamente
                   </button>
-                  <input ref={reuploadInput} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" hidden onChange={(e) => e.target.files?.[0] && props.onReupload(item.id, e.target.files[0])} />
+                  <input
+                    ref={reuploadInput}
+                    type="file"
+                    accept="video/mp4,video/quicktime,.mp4,.mov"
+                    hidden
+                    onChange={(e) =>
+                      e.target.files?.[0] && props.onReupload(item.id, e.target.files[0])
+                    }
+                  />
                 </>
               )}
             </div>
@@ -194,11 +258,18 @@ export function VideoCard(props: Props) {
                 Enviar imagem (opcional)
               </button>
             )}
-            <input ref={coverInput} type="file" accept="image/jpeg,image/png" hidden onChange={(e) => e.target.files?.[0] && props.onCover(item.id, e.target.files[0])} />
+            <input
+              ref={coverInput}
+              type="file"
+              accept="image/jpeg,image/png"
+              hidden
+              onChange={(e) => e.target.files?.[0] && props.onCover(item.id, e.target.files[0])}
+            />
             {ready && durationMs > 0 && (
               <div className="frame-picker">
                 <label>
-                  Quadro (para conexões que só aceitam quadro): <strong>{(frameMs / 1000).toFixed(1)} s</strong>
+                  Quadro (para conexões que só aceitam quadro):{' '}
+                  <strong>{(frameMs / 1000).toFixed(1)} s</strong>
                   <input
                     type="range"
                     min={0}
@@ -214,13 +285,21 @@ export function VideoCard(props: Props) {
                     onKeyUp={() => props.onFrame(item.id, frameMs)}
                   />
                 </label>
-                <video ref={frameVideo} className="frame-preview" src={src} muted preload="metadata" onLoadedMetadata={(e) => (e.currentTarget.currentTime = frameMs / 1000)} />
+                <video
+                  ref={frameVideo}
+                  className="frame-preview"
+                  src={src}
+                  muted
+                  preload="metadata"
+                  onLoadedMetadata={(e) => (e.currentTarget.currentTime = frameMs / 1000)}
+                />
               </div>
             )}
             <ul className="cover-results">
               {enabledPlatforms.map((p) => (
                 <li key={p}>
-                  <span className={`dot ${p}`} /> {PLATFORM_LABEL[p]}: {texts[p].enabled ? coverResult(p, item, conn(p)) : 'desativado neste vídeo'}
+                  <span className={`dot ${p}`} /> {PLATFORM_LABEL[p]}:{' '}
+                  {texts[p].enabled ? coverResult(p, item, conn(p)) : 'desativado neste vídeo'}
                 </li>
               ))}
             </ul>
@@ -228,23 +307,69 @@ export function VideoCard(props: Props) {
         </div>
 
         <div className="texts-col">
-          <div className="ptabs" role="tablist">
+          <div
+            className="ptabs"
+            role="tablist"
+            aria-label="Textos por plataforma"
+            style={
+              {
+                '--segment': Math.max(0, enabledPlatforms.indexOf(tab)),
+                '--segments': Math.max(1, enabledPlatforms.length),
+              } as CSSProperties
+            }
+          >
             {enabledPlatforms.map((p) => {
-              const errs = texts[p].enabled ? issuesFor(p).filter((i) => i.level === 'error').length : 0;
+              const errs = texts[p].enabled
+                ? issuesFor(p).filter((i) => i.level === 'error').length
+                : 0;
               return (
-                <button key={p} role="tab" aria-selected={tab === p} className={tab === p ? `ptab ${p} active` : `ptab ${p}`} onClick={() => setTab(p)}>
+                <button
+                  key={p}
+                  role="tab"
+                  aria-selected={tab === p}
+                  tabIndex={tab === p ? 0 : -1}
+                  className={tab === p ? `ptab ${p} active` : `ptab ${p}`}
+                  onClick={() => setTab(p)}
+                  onKeyDown={(event) => {
+                    const direction =
+                      event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+                    if (!direction && !['Home', 'End'].includes(event.key)) return;
+                    event.preventDefault();
+                    const index =
+                      event.key === 'Home'
+                        ? 0
+                        : event.key === 'End'
+                          ? enabledPlatforms.length - 1
+                          : (enabledPlatforms.indexOf(p) + direction + enabledPlatforms.length) %
+                            enabledPlatforms.length;
+                    setTab(enabledPlatforms[index]);
+                    (
+                      event.currentTarget.parentElement?.children[index] as HTMLButtonElement
+                    )?.focus();
+                  }}
+                >
                   {PLATFORM_LABEL[p]}
                   {!texts[p].enabled && <span className="muted"> (off)</span>}
-                  {errs > 0 && <span className="badge-err" title={`${errs} pendência(s)`}>{errs}</span>}
+                  {errs > 0 && (
+                    <span className="badge-err" title={`${errs} pendência(s)`}>
+                      {errs}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
-          {enabledPlatforms.length === 0 && <p className="muted">Nenhuma rede escolhida para o lote.</p>}
+          {enabledPlatforms.length === 0 && (
+            <p className="muted">Nenhuma rede escolhida para o lote.</p>
+          )}
           {enabledPlatforms.includes(tab) && (
             <div className="ptab-panel" role="tabpanel">
               <label className="switch">
-                <input type="checkbox" checked={texts[tab].enabled} onChange={(e) => update(tab, { enabled: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={texts[tab].enabled}
+                  onChange={(e) => update(tab, { enabled: e.target.checked })}
+                />
                 Publicar este vídeo no {PLATFORM_LABEL[tab]} ({KIND[tab]})
               </label>
               {texts[tab].enabled && (
@@ -255,7 +380,10 @@ export function VideoCard(props: Props) {
                         Título {tab === 'youtube' && <span className="req">*</span>}
                         <Counter text={texts[tab].title} platform={tab} field="title" />
                       </label>
-                      <input value={texts[tab].title} onChange={(e) => update(tab, { title: e.target.value })} />
+                      <input
+                        value={texts[tab].title}
+                        onChange={(e) => update(tab, { title: e.target.value })}
+                      />
                     </div>
                   )}
                   <div className="field">
@@ -263,7 +391,11 @@ export function VideoCard(props: Props) {
                       {tab === 'instagram' ? 'Legenda' : 'Descrição'}
                       <Counter text={texts[tab].description} platform={tab} field="description" />
                     </label>
-                    <textarea rows={5} value={texts[tab].description} onChange={(e) => update(tab, { description: e.target.value })} />
+                    <textarea
+                      rows={5}
+                      value={texts[tab].description}
+                      onChange={(e) => update(tab, { description: e.target.value })}
+                    />
                   </div>
                   {tab === 'youtube' && (
                     <fieldset className="field">
@@ -271,10 +403,22 @@ export function VideoCard(props: Props) {
                         Público: este vídeo é “feito para crianças”? <span className="req">*</span>
                       </legend>
                       <label className="radio">
-                        <input type="radio" name={`kids-${item.id}`} checked={texts.youtube.madeForKids === false} onChange={() => update('youtube', { madeForKids: false })} /> Não, não é feito para crianças
+                        <input
+                          type="radio"
+                          name={`kids-${item.id}`}
+                          checked={texts.youtube.madeForKids === false}
+                          onChange={() => update('youtube', { madeForKids: false })}
+                        />{' '}
+                        Não, não é feito para crianças
                       </label>
                       <label className="radio">
-                        <input type="radio" name={`kids-${item.id}`} checked={texts.youtube.madeForKids === true} onChange={() => update('youtube', { madeForKids: true })} /> Sim, é feito para crianças
+                        <input
+                          type="radio"
+                          name={`kids-${item.id}`}
+                          checked={texts.youtube.madeForKids === true}
+                          onChange={() => update('youtube', { madeForKids: true })}
+                        />{' '}
+                        Sim, é feito para crianças
                       </label>
                     </fieldset>
                   )}
@@ -283,7 +427,12 @@ export function VideoCard(props: Props) {
                       <legend>Direct Post</legend>
                       <label>
                         Privacidade
-                        <select value={texts.tiktok.privacyLevel ?? ''} onChange={(e) => update('tiktok', { privacyLevel: e.target.value || null })}>
+                        <select
+                          value={texts.tiktok.privacyLevel ?? ''}
+                          onChange={(e) =>
+                            update('tiktok', { privacyLevel: e.target.value || null })
+                          }
+                        >
                           <option value="">Escolha…</option>
                           {props.tiktokPrivacyOptions.map((o) => (
                             <option key={o} value={o}>
@@ -293,16 +442,39 @@ export function VideoCard(props: Props) {
                         </select>
                       </label>
                       <label className="switch">
-                        <input type="checkbox" checked={!!texts.tiktok.disableComment} onChange={(e) => update('tiktok', { disableComment: e.target.checked })} /> Desativar comentários
+                        <input
+                          type="checkbox"
+                          checked={!!texts.tiktok.disableComment}
+                          onChange={(e) => update('tiktok', { disableComment: e.target.checked })}
+                        />{' '}
+                        Desativar comentários
                       </label>
                       <label className="switch">
-                        <input type="checkbox" checked={!!texts.tiktok.disableDuet} onChange={(e) => update('tiktok', { disableDuet: e.target.checked })} /> Desativar dueto
+                        <input
+                          type="checkbox"
+                          checked={!!texts.tiktok.disableDuet}
+                          onChange={(e) => update('tiktok', { disableDuet: e.target.checked })}
+                        />{' '}
+                        Desativar dueto
                       </label>
                       <label className="switch">
-                        <input type="checkbox" checked={!!texts.tiktok.disableStitch} onChange={(e) => update('tiktok', { disableStitch: e.target.checked })} /> Desativar costura
+                        <input
+                          type="checkbox"
+                          checked={!!texts.tiktok.disableStitch}
+                          onChange={(e) => update('tiktok', { disableStitch: e.target.checked })}
+                        />{' '}
+                        Desativar costura
                       </label>
                       <label className="switch consent">
-                        <input type="checkbox" checked={!!texts.tiktok.directPostConsent} onChange={(e) => update('tiktok', { directPostConsent: e.target.checked })} /> Ao publicar, você concorda com a Music Usage Confirmation do TikTok e autoriza o envio deste vídeo no horário agendado.
+                        <input
+                          type="checkbox"
+                          checked={!!texts.tiktok.directPostConsent}
+                          onChange={(e) =>
+                            update('tiktok', { directPostConsent: e.target.checked })
+                          }
+                        />{' '}
+                        Ao publicar, você concorda com a Music Usage Confirmation do TikTok e
+                        autoriza o envio deste vídeo no horário agendado.
                       </label>
                     </fieldset>
                   )}

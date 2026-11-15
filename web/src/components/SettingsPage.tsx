@@ -2,110 +2,264 @@ import { useState } from 'react';
 import type { Platform, SettingsDTO } from '../../../server/src/shared/types';
 import { PLATFORM_LABEL, PLATFORMS } from '../../../server/src/shared/types';
 import { api } from '../lib/api';
-
-const FAULTS: Array<{ id: string; label: string }> = [
+import { Icon } from './ui/Icon';
+const FAULTS = [
   { id: 'fail', label: 'Falha definitiva' },
-  { id: 'transient', label: 'Falha temporária (nova tentativa)' },
-  { id: 'timeout', label: 'Timeout após envio (reconcilia pelo ID)' },
-  { id: 'unverifiable', label: 'Resultado desconhecido (revisão manual)' },
+  { id: 'transient', label: 'Falha temporária' },
+  { id: 'timeout', label: 'Timeout após envio' },
+  { id: 'unverifiable', label: 'Resultado desconhecido' },
 ];
-
-export function SettingsPage({ settings, onChange }: { settings: SettingsDTO; onChange: (s: SettingsDTO) => void }) {
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
-  const [fp, setFp] = useState<Platform>('instagram');
-  const [fk, setFk] = useState('fail');
+export function SettingsPage({
+  settings,
+  onChange,
+}: {
+  settings: SettingsDTO;
+  onChange: (s: SettingsDTO) => void;
+}) {
+  const [error, setError] = useState<string | null>(null),
+    [info, setInfo] = useState<string | null>(null),
+    [busy, setBusy] = useState(false);
+  const [fp, setFp] = useState<Platform>('instagram'),
+    [fk, setFk] = useState('fail');
   const demo = settings.mode === 'demo';
-
   const toggle = async () => {
     const next = demo ? 'real' : 'demo';
-    const msg =
-      next === 'demo'
-        ? 'Ativar o MODO DEMONSTRAÇÃO?\n\nVocê verá dados separados e contas simuladas. Nada será publicado. Seus lotes reais continuam guardados e a fila real continua rodando.'
-        : 'Voltar ao MODO REAL?\n\nOs lotes confirmados neste modo usam suas contas conectadas e publicam de verdade.';
-    if (!confirm(msg)) return;
+    if (
+      !confirm(
+        next === 'demo'
+          ? 'Ativar o MODO DEMONSTRAÇÃO? Contas e publicações serão simuladas em dados separados. Seus lotes reais continuam guardados.'
+          : 'Voltar ao modo real? Os lotes confirmados neste modo usam suas contas conectadas.',
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
     try {
       onChange(await api.setMode(next));
+      setInfo('Modo de operação atualizado.');
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      setBusy(false);
     }
   };
-
   return (
-    <div className="page">
-      <h1>Configurações</h1>
-      {error && <div className="alert error">{error}</div>}
-      {info && <div className="alert success">{info}</div>}
-
-      <section className="panel">
-        <h3>Modo de operação</h3>
-        <p>
-          Modo atual: <strong>{demo ? 'DEMONSTRAÇÃO (simulado)' : 'REAL'}</strong>
-        </p>
-        <p className="muted">
-          Os dados de demonstração ficam em <code>data/demo/</code> e os reais em <code>data/real/</code>. Conectores simulados nunca acessam a rede, e os reais nunca processam
-          tarefas de demonstração.
-        </p>
-        <button className={demo ? 'primary' : ''} onClick={toggle} disabled={!settings.backgroundWorker}>
-          {demo ? 'Desativar demonstração e voltar ao modo real' : 'Ativar modo demonstração'}
-        </button>
-      </section>
-      {!settings.backgroundWorker && <div className="alert">A agenda manual funciona sem serviços externos e salva registros neste navegador. OAuth só salva tokens com persistência no servidor e criptografia. Vídeos exigem armazenamento próprio. Não há cron ou fila de publicação futura nesta versão.</div>}
-
-      {demo && (
-        <section className="panel">
-          <h3>Simular falhas (somente demonstração)</h3>
-          <p className="muted">A próxima chamada simulada da plataforma escolhida vai falhar do jeito indicado.</p>
-          <div className="row">
-            <select value={fp} onChange={(e) => setFp(e.target.value as Platform)}>
-              {PLATFORMS.map((p) => (
-                <option key={p} value={p}>
-                  {PLATFORM_LABEL[p]}
-                </option>
-              ))}
-            </select>
-            <select value={fk} onChange={(e) => setFk(e.target.value)}>
-              {FAULTS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+    <div className="settings-page">
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">DO SEU JEITO, COM CLAREZA</span>
+          <h1>
+            Configurações<span className="accent-dot">.</span>
+          </h1>
+          <p>Conheça seu espaço de trabalho e como seus registros são guardados.</p>
+        </div>
+        <span className="context-badge">
+          <Icon name="settings" size={15} />
+          Seu espaço de trabalho
+        </span>
+      </div>
+      {error && (
+        <div className="alert error" role="alert">
+          {error}
+          <button onClick={toggle} disabled={busy}>
+            Tentar de novo
+          </button>
+        </div>
+      )}
+      {info && (
+        <div className="alert success" role="status">
+          <Icon name="check" />
+          {info}
+        </div>
+      )}
+      <div className="settings-grid">
+        <section className="work-panel">
+          <div className="section-heading">
+            <span className="settings-symbol">
+              <Icon name="calendar" />
+            </span>
+            <h2>Seu ritmo de publicação</h2>
+            <span className="optional-label">AGENDA</span>
+          </div>
+          <dl className="settings-values">
+            <div>
+              <dt>Horário diário</dt>
+              <dd className="time-value">
+                {settings.publishTime}
+                <small>Horário de Brasília</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Fuso horário</dt>
+              <dd>
+                {settings.timezone}
+                <small>Um vídeo por dia corrido</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Antecedência mínima</dt>
+              <dd>{settings.minLeadMinutes} minutos</dd>
+            </div>
+            <div>
+              <dt>Tolerância de atraso</dt>
+              <dd>{settings.lateToleranceMinutes} minutos</dd>
+            </div>
+          </dl>
+          <p className="settings-footnote">
+            Parâmetros do servidor. O planejamento manual mantém o horário das 12:00.
+          </p>
+        </section>
+        <section className="work-panel">
+          <div className="section-heading">
+            <span className="settings-symbol">
+              <Icon name="shield" />
+            </span>
+            <h2>Dados e privacidade</h2>
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>Agenda manual</strong>
+              <span>Registros guardados apenas neste navegador.</span>
+            </div>
+            <span className="badge st-published">
+              <Icon name="check" size={12} />
+              Disponível
+            </span>
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>Persistência no servidor</strong>
+              <span>Para conexões e registros compartilhados pelo app.</span>
+            </div>
+            <span className="badge">
+              {settings.serverPersistence ? 'Configurada' : 'Não configurada'}
+            </span>
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>Armazenamento de mídia</strong>
+              <span>Vídeos e capas, quando o recurso está disponível.</span>
+            </div>
+            <span className="badge">{settings.mediaPersistence ? 'Configurado' : 'Manual'}</span>
+          </div>
+          <a className="settings-text-link" href="/privacidade">
+            Ler a Política de Privacidade
+            <Icon name="arrow" size={15} />
+          </a>
+        </section>
+        <section className="work-panel">
+          <div className="section-heading">
+            <span className="settings-symbol">
+              <Icon name="spark" />
+            </span>
+            <h2>Modo de operação</h2>
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>Demonstração</strong>
+              <span>
+                {demo
+                  ? 'Ativa. Contas e publicações são simuladas.'
+                  : 'Explore os conectores sem publicar conteúdo real.'}
+              </span>
+            </div>
             <button
-              onClick={async () => {
-                try {
-                  await api.setFault(fp, fk);
-                  setInfo(`Falha programada para ${PLATFORM_LABEL[fp]}.`);
-                } catch (e: any) {
-                  setError(e.message);
-                }
-              }}
+              type="button"
+              role="switch"
+              aria-checked={demo}
+              aria-label="Modo demonstração"
+              className={`liquid-toggle ${demo ? 'is-on' : ''}`}
+              onClick={toggle}
+              disabled={!settings.backgroundWorker || busy}
             >
-              Programar
+              <span />
             </button>
           </div>
+          <p className="settings-footnote">
+            {settings.backgroundWorker
+              ? 'Os dados de demonstração e os reais ficam separados. A mudança pede confirmação.'
+              : 'Demonstração com fila disponível somente na execução local. Aqui, a agenda manual não depende de integrações.'}
+          </p>
+          {demo && (
+            <div className="fault-controls">
+              <h3>Simular uma falha</h3>
+              <label>
+                Plataforma
+                <select value={fp} onChange={(e) => setFp(e.target.value as Platform)}>
+                  {PLATFORMS.map((p) => (
+                    <option key={p} value={p}>
+                      {PLATFORM_LABEL[p]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Tipo de falha
+                <select value={fk} onChange={(e) => setFk(e.target.value)}>
+                  {FAULTS.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                onClick={async () => {
+                  try {
+                    await api.setFault(fp, fk);
+                    setInfo(`Falha programada para ${PLATFORM_LABEL[fp]}.`);
+                  } catch (e: any) {
+                    setError(e.message);
+                  }
+                }}
+              >
+                Programar simulação
+              </button>
+            </div>
+          )}
         </section>
-      )}
-
-      <section className="panel">
-        <h3>Parâmetros (definidos no .env)</h3>
-        <dl className="kv">
-          <dt>Fuso horário</dt>
-          <dd>{settings.timezone}</dd>
-          <dt>Horário de publicação</dt>
-          <dd>{settings.publishTime}</dd>
-          <dt>Tolerância de atraso</dt>
-          <dd>{settings.lateToleranceMinutes} min (LATE_TOLERANCE_MINUTES)</dd>
-          <dt>Antecedência mínima</dt>
-          <dd>{settings.minLeadMinutes} min (MIN_LEAD_MINUTES)</dd>
-          <dt>Endereço HTTPS público</dt>
-          <dd>{settings.publicBaseUrlConfigured ? 'configurado (links temporários para a Meta)' : 'não configurado'}</dd>
-          <dt>TikTok</dt>
-          <dd>{settings.tiktokMode === 'manual' ? 'publicação manual' : settings.tiktokMode === 'inbox' ? 'envio à caixa de entrada' : 'Direct Post'}</dd>
-          <dt>Meta Graph API</dt>
-          <dd>{settings.graphVersion}</dd>
-        </dl>
-      </section>
+        <section className="work-panel">
+          <div className="section-heading">
+            <span className="settings-symbol">
+              <Icon name="link" />
+            </span>
+            <h2>Publicação e conexões</h2>
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>TikTok</strong>
+              <span>
+                {settings.tiktokMode === 'manual'
+                  ? 'Publicação manual na plataforma.'
+                  : settings.tiktokMode === 'inbox'
+                    ? 'Envio à caixa de entrada.'
+                    : 'Direct Post disponível.'}
+              </span>
+            </div>
+            <Icon name="tiktok" size={22} />
+          </div>
+          <div className="setting-status">
+            <div>
+              <strong>Execução futura do app</strong>
+              <span>
+                {settings.backgroundWorker
+                  ? 'Depende do servidor local ligado.'
+                  : 'Indisponível. Prepare envios nativos ou publique manualmente.'}
+              </span>
+            </div>
+          </div>
+          <dl className="kv">
+            <dt>Endereço público</dt>
+            <dd>{settings.publicBaseUrlConfigured ? 'Configurado' : 'Não configurado'}</dd>
+            <dt>Meta Graph API</dt>
+            <dd>{settings.graphVersion}</dd>
+          </dl>
+          <a className="settings-text-link" href="#/conexoes">
+            Gerenciar conexões
+            <Icon name="arrow" size={15} />
+          </a>
+        </section>
+      </div>
     </div>
   );
 }

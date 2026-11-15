@@ -1,5 +1,6 @@
 import { useId, useRef } from 'react';
 import { brToIso, isoToBr, maskBrDate, todayIsoSaoPaulo } from '../lib/date';
+import { Icon } from './ui/Icon';
 
 interface Props {
   label: string;
@@ -8,10 +9,11 @@ interface Props {
   error?: string | null;
   hint?: string;
   autoFocus?: boolean;
+  minDate?: string | false;
 }
 
 /** Campo DD/MM/AAAA com máscara e calendário nativo opcional. */
-export function DateField({ label, value, onChange, error, hint, autoFocus }: Props) {
+export function DateField({ label, value, onChange, error, hint, autoFocus, minDate }: Props) {
   const id = useId();
   const picker = useRef<HTMLInputElement>(null);
   return (
@@ -41,7 +43,7 @@ export function DateField({ label, value, onChange, error, hint, autoFocus }: Pr
             }
           }}
         >
-          <span aria-hidden>📅</span>
+          <Icon name="calendar" size={19} />
           <span className="sr-only">Abrir calendário</span>
         </button>
         <input
@@ -50,12 +52,16 @@ export function DateField({ label, value, onChange, error, hint, autoFocus }: Pr
           type="date"
           tabIndex={-1}
           aria-hidden
-          min={todayIsoSaoPaulo()}
+          min={minDate === false ? undefined : (minDate ?? todayIsoSaoPaulo())}
           value={brToIso(value)}
           onChange={(e) => onChange(isoToBr(e.target.value))}
         />
       </div>
-      <div id={`${id}-msg`} className={error ? 'field-error' : 'field-hint'} role={error ? 'alert' : undefined}>
+      <div
+        id={`${id}-msg`}
+        className={error ? 'field-error' : 'field-hint'}
+        role={error ? 'alert' : undefined}
+      >
         {error ?? hint}
       </div>
     </div>

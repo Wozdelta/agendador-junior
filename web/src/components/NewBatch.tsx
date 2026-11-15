@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { BatchDTO, BatchSummary, ConnectionDTO, Platform, PlatformTexts, SettingsDTO } from '../../../server/src/shared/types';
+import type {
+  BatchDTO,
+  BatchSummary,
+  ConnectionDTO,
+  Platform,
+  PlatformTexts,
+  SettingsDTO,
+} from '../../../server/src/shared/types';
 import { PLATFORM_LABEL, PLATFORMS } from '../../../server/src/shared/types';
 import { api, ApiError, idemKey, uploadFile } from '../lib/api';
 import { isValidBrDate } from '../lib/date';
 import { DateField } from './DateField';
 import { VideoCard, type UploadState } from './VideoCard';
+import { Icon } from './ui/Icon';
+import { useDialogFocus } from './ui/useDialogFocus';
 
-type Patch = { platforms?: Partial<Record<Platform, Partial<PlatformTexts>>>; coverFrameMs?: number };
+type Patch = {
+  platforms?: Partial<Record<Platform, Partial<PlatformTexts>>>;
+  coverFrameMs?: number;
+};
 const UPLOAD_CONCURRENCY = 2;
 
 export function NewBatch({ settings }: { settings: SettingsDTO }) {
@@ -22,6 +34,9 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const [dragItem, setDragItem] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [summary, setSummary] = useState<BatchSummary | null>(null);
+  useDialogFocus(!!summary, () => {
+    if (!busy) setSummary(null);
+  });
   const [confirmKey, setConfirmKey] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ count: number } | null>(null);
@@ -40,7 +55,10 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
         setConnections(c);
         if (d[0]) open(d[0]);
         if (c.find((x) => x.platform === 'tiktok')?.capabilities.includes('direct')) {
-          api.creatorInfo().then((i) => setTiktokPrivacy(i.privacy_level_options)).catch(() => setTiktokPrivacy(null));
+          api
+            .creatorInfo()
+            .then((i) => setTiktokPrivacy(i.privacy_level_options))
+            .catch(() => setTiktokPrivacy(null));
         }
       } catch (e: any) {
         setError(e.message);
@@ -65,7 +83,8 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
     for (const [itemId, patch] of entries) {
       try {
         const nb = await api.patchItem(b.id, itemId, patch, keepalive);
-        if (!keepalive) setBatch((cur) => (cur && cur.id === nb.id ? mergeKeepingTexts(cur, nb) : cur));
+        if (!keepalive)
+          setBatch((cur) => (cur && cur.id === nb.id ? mergeKeepingTexts(cur, nb) : cur));
       } catch (e: any) {
         if (!keepalive) setError(`Não foi possível salvar o rascunho: ${e.message}`);
       }
@@ -86,7 +105,8 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const queuePatch = (itemId: string, patch: Patch) => {
     const cur = pending.current.get(itemId) ?? {};
     const platforms = { ...(cur.platforms ?? {}) };
-    for (const [p, v] of Object.entries(patch.platforms ?? {})) platforms[p as Platform] = { ...(platforms[p as Platform] ?? {}), ...v };
+    for (const [p, v] of Object.entries(patch.platforms ?? {}))
+      platforms[p as Platform] = { ...(platforms[p as Platform] ?? {}), ...v };
     pending.current.set(itemId, { ...cur, ...patch, platforms });
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => void flush(), 600);
@@ -126,15 +146,23 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
       for (let next = queue.shift(); next; next = queue.shift()) {
         const { itemId, file } = next;
         try {
-          const target = b.items.find((i) => i.id === itemId)?.uploadUrl ?? `/api/batches/${b.id}/items/${itemId}/video`;
+          const target =
+            b.items.find((i) => i.id === itemId)?.uploadUrl ??
+            `/api/batches/${b.id}/items/${itemId}/video`;
           const nb = await uploadFile(target, file, (pct) =>
             setUploads((u) => ({ ...u, [itemId]: { ...u[itemId], pct, active: true } })),
           );
           setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb));
           setUploads((u) => ({ ...u, [itemId]: { ...u[itemId], pct: 100, active: false } }));
         } catch (e: any) {
-          setUploads((u) => ({ ...u, [itemId]: { ...u[itemId], active: false, error: e.message } }));
-          api.batch(b.id).then((nb) => setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb))).catch(() => undefined);
+          setUploads((u) => ({
+            ...u,
+            [itemId]: { ...u[itemId], active: false, error: e.message },
+          }));
+          api
+            .batch(b.id)
+            .then((nb) => setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb)))
+            .catch(() => undefined);
         }
       }
     };
@@ -147,11 +175,15 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
     if (files.length === 0) return;
     setError(null);
     try {
-      const { batch: nb, itemIds } = await api.reserveItems(batch.id, files.map((f) => ({ name: f.name, size: f.size })));
+      const { batch: nb, itemIds } = await api.reserveItems(
+        batch.id,
+        files.map((f) => ({ name: f.name, size: f.size })),
+      );
       const pairs = itemIds.map((itemId, i) => ({ itemId, file: files[i] }));
       setUploads((u) => {
         const next = { ...u };
-        for (const { itemId, file } of pairs) next[itemId] = { pct: 0, active: true, objectUrl: URL.createObjectURL(file) };
+        for (const { itemId, file } of pairs)
+          next[itemId] = { pct: 0, active: true, objectUrl: URL.createObjectURL(file) };
         return next;
       });
       setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb));
@@ -185,12 +217,24 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const dropOn = (targetId: string) => {
     if (!batch || !dragItem || dragItem === targetId) return;
     const ids = batch.items.map((i) => i.id).filter((id) => id !== dragItem);
-    ids.splice(ids.indexOf(targetId) + (batch.items.findIndex((i) => i.id === dragItem) < batch.items.findIndex((i) => i.id === targetId) ? 1 : 0), 0, dragItem);
+    ids.splice(
+      ids.indexOf(targetId) +
+        (batch.items.findIndex((i) => i.id === dragItem) <
+        batch.items.findIndex((i) => i.id === targetId)
+          ? 1
+          : 0),
+      0,
+      dragItem,
+    );
     void reorder(ids);
   };
 
   const remove = async (itemId: string) => {
-    if (!batch || !confirm('Excluir este vídeo do lote? As datas dos seguintes serão recalculadas.')) return;
+    if (
+      !batch ||
+      !confirm('Excluir este vídeo do lote? As datas dos seguintes serão recalculadas.')
+    )
+      return;
     await flush();
     pending.current.delete(itemId);
     try {
@@ -203,7 +247,9 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const setCover = async (itemId: string, file: File) => {
     if (!batch) return;
     try {
-      const target = batch.items.find((i) => i.id === itemId)?.coverUploadUrl ?? `/api/batches/${batch.id}/items/${itemId}/cover`;
+      const target =
+        batch.items.find((i) => i.id === itemId)?.coverUploadUrl ??
+        `/api/batches/${batch.id}/items/${itemId}/cover`;
       const nb = await uploadFile(target, file, () => undefined);
       setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb));
     } catch (e: any) {
@@ -245,7 +291,15 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
     } catch (e: any) {
       if (e instanceof ApiError && e.code === 'in_progress') return;
       if (e instanceof ApiError && Array.isArray(e.details)) {
-        setSummary((s) => (s ? { ...s, canConfirm: false, issues: [...e.details, ...s.issues.filter((i) => i.level !== 'error')] } : s));
+        setSummary((s) =>
+          s
+            ? {
+                ...s,
+                canConfirm: false,
+                issues: [...e.details, ...s.issues.filter((i) => i.level !== 'error')],
+              }
+            : s,
+        );
       }
       setError(e.message);
     } finally {
@@ -268,8 +322,12 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <h1>Novo lote</h1>
+      <div className="page-head advanced-heading">
+        <span className="eyebrow">SEU ESTÚDIO DE CONTEÚDO</span>
+        <h1>
+          Novo lote<span className="accent-dot">.</span>
+        </h1>
+        <p className="muted">Prepare seus vídeos e mantenha cada plataforma no seu ritmo.</p>
         {drafts.length > 0 && (
           <div className="drafts">
             <span className="muted">Rascunhos salvos:</span>
@@ -278,7 +336,11 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
                 <button className="link" onClick={() => open(d)}>
                   {d.startDate} · {d.items.length} vídeo(s)
                 </button>
-                <button className="link danger" aria-label="Descartar rascunho" onClick={() => discard(d)}>
+                <button
+                  className="link danger"
+                  aria-label="Descartar rascunho"
+                  onClick={() => discard(d)}
+                >
                   ×
                 </button>
               </span>
@@ -300,150 +362,263 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
 
       {done && (
         <div className="alert success">
-          Lote registrado: {done.count} tarefa(s). Acompanhe em <a href="#/agenda">Agenda</a>. {!settings.backgroundWorker && 'Prepare os envios nativos na Agenda; as outras plataformas exigem publicação manual.'}
+          Lote registrado: {done.count} tarefa(s). Acompanhe em <a href="#/agenda">Agenda</a>.{' '}
+          {!settings.backgroundWorker &&
+            'Prepare os envios nativos na Agenda; as outras plataformas exigem publicação manual.'}
         </div>
       )}
       {error && (
         <div className="alert error" role="alert">
-          {error} <button className="link" onClick={() => setError(null)}>fechar</button>
+          {error}{' '}
+          <button className="link" onClick={() => setError(null)}>
+            fechar
+          </button>
         </div>
       )}
 
-      <section className="panel">
-        <DateField
-          label="Data inicial"
-          value={dateInput}
-          onChange={onDate}
-          error={dateError}
-          autoFocus={!batch}
-          hint={`Um vídeo por dia corrido (inclui fins de semana e feriados), sempre às ${settings.publishTime} no fuso ${settings.timezone}.`}
-        />
-        {batch && <p className="saved-note">Rascunho salvo automaticamente no servidor — pode fechar a página e voltar depois.</p>}
-      </section>
-
-      {validDate && batch && (
-        <>
+      <div className="advanced-workspace">
+        <div className="advanced-form">
           <section className="panel">
-            <h3>Redes do lote</h3>
-            <div className="platform-toggles">
-              {PLATFORMS.map((p) => (
-                <label key={p} className={`ptoggle ${p}`}>
-                  <input type="checkbox" checked={batch.platforms[p]} onChange={(e) => togglePlatform(p, e.target.checked)} />
-                  {PLATFORM_LABEL[p]}
-                  <small>{connLabel(connections.find((c) => c.platform === p))}</small>
-                </label>
-              ))}
-            </div>
-          </section>
-
-          <section
-            className={dragOver ? 'dropzone over' : 'dropzone'}
-            onDragOver={(e) => {
-              if (e.dataTransfer.types.includes('Files')) {
-                e.preventDefault();
-                setDragOver(true);
-              }
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              if (!e.dataTransfer.files.length) return;
-              e.preventDefault();
-              setDragOver(false);
-              void addFiles(e.dataTransfer.files);
-            }}
-          >
-            <p>
-              <strong>Arraste e solte um ou vários vídeos aqui</strong>
-              <br />
-              <span className="muted">MP4 ou MOV. A ordem recebida vira a ordem inicial — reorganize depois se quiser.</span>
-            </p>
-            <button className="primary" onClick={() => fileInput.current?.click()}>
-              Selecionar vídeos
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              multiple
-              accept="video/mp4,video/quicktime,.mp4,.mov"
-              hidden
-              onChange={(e) => {
-                if (e.target.files) void addFiles(e.target.files);
-                e.target.value = '';
-              }}
+            <DateField
+              label="Data inicial"
+              value={dateInput}
+              onChange={onDate}
+              error={dateError}
+              autoFocus={!batch}
+              hint={`Um vídeo por dia às ${settings.publishTime} · ${settings.timezone === 'America/Sao_Paulo' ? 'Horário de Brasília' : settings.timezone}.`}
             />
+            {batch && (
+              <p className="saved-note">
+                Rascunho salvo automaticamente no servidor — pode fechar a página e voltar depois.
+              </p>
+            )}
           </section>
 
-          {batch.items.length > 0 && (
-            <section className="items">
-              <div className="items-head">
-                <h3>Prévia ({batch.items.length} vídeo{batch.items.length > 1 ? 's' : ''})</h3>
-                <span className="muted">
-                  {batch.items[0].scheduledLocal} → {batch.items[batch.items.length - 1].scheduledLocal}
-                </span>
-              </div>
-              {batch.items.map((it, i) => (
-                <VideoCard
-                  key={it.id}
-                  item={it}
-                  index={i}
-                  total={batch.items.length}
-                  batchPlatforms={batch.platforms}
-                  connections={connections}
-                  upload={uploads[it.id]}
-                  tiktokPrivacyOptions={tiktokPrivacy}
-                  isDragOver={dropTarget === it.id && dragItem !== it.id}
-                  dragProps={{
-                    draggable: true,
-                    onDragStart: (e) => {
-                      setDragItem(it.id);
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', it.id);
-                    },
-                    onDragOver: (e) => {
-                      if (dragItem) {
-                        e.preventDefault();
-                        setDropTarget(it.id);
-                      }
-                    },
-                    onDrop: (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      dropOn(it.id);
-                      setDragItem(null);
-                      setDropTarget(null);
-                    },
-                    onDragEnd: () => {
-                      setDragItem(null);
-                      setDropTarget(null);
-                    },
-                  }}
-                  onTexts={(id, p, patch) => queuePatch(id, { platforms: { [p]: patch } })}
-                  onFrame={(id, ms) => queuePatch(id, { coverFrameMs: ms })}
-                  onMove={move}
-                  onRemove={remove}
-                  onCover={setCover}
-                  onRemoveCover={async (id) => setBatch(mergeKeepingTexts(batch, await api.deleteCover(batch.id, id)))}
-                  onReupload={(id, file) => {
-                    setUploads((u) => ({ ...u, [id]: { pct: 0, active: true, objectUrl: URL.createObjectURL(file) } }));
-                    void runUploads(batch, [{ itemId: id, file }]);
+          {validDate && batch && (
+            <>
+              <section className="panel">
+                <h3>Redes do lote</h3>
+                <div className="platform-toggles">
+                  {PLATFORMS.map((p) => (
+                    <label
+                      key={p}
+                      className={`platform-card ${p} ${batch.platforms[p] ? 'is-selected' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={batch.platforms[p]}
+                        onChange={(e) => togglePlatform(p, e.target.checked)}
+                      />
+                      <span className="platform-avatar">
+                        <Icon name={p} size={22} />
+                      </span>
+                      <span className="platform-name">
+                        {PLATFORM_LABEL[p]}
+                        <small>{connLabel(connections.find((c) => c.platform === p))}</small>
+                      </span>
+                      <span className="selection-check">
+                        <Icon name="check" size={13} />
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+
+              <section
+                className={dragOver ? 'dropzone over' : 'dropzone'}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes('Files')) {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  if (!e.dataTransfer.files.length) return;
+                  e.preventDefault();
+                  setDragOver(false);
+                  void addFiles(e.dataTransfer.files);
+                }}
+              >
+                <p>
+                  <strong>Arraste e solte um ou vários vídeos aqui</strong>
+                  <br />
+                  <span className="muted">
+                    MP4 ou MOV. A ordem recebida vira a ordem inicial — reorganize depois se quiser.
+                  </span>
+                </p>
+                <button className="primary" onClick={() => fileInput.current?.click()}>
+                  <Icon name="plus" size={17} />
+                  Selecionar arquivos
+                </button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  accept="video/mp4,video/quicktime,.mp4,.mov"
+                  hidden
+                  onChange={(e) => {
+                    if (e.target.files) void addFiles(e.target.files);
+                    e.target.value = '';
                   }}
                 />
-              ))}
-              <div className="actions-bar">
-                <button className="primary big" onClick={review} disabled={anyUploading}>
-                  {anyUploading ? 'Aguardando envios…' : 'Revisar e agendar'}
-                </button>
-              </div>
-            </section>
+              </section>
+
+              {batch.items.length > 0 && (
+                <section className="items">
+                  <div className="items-head">
+                    <h3>
+                      Prévia ({batch.items.length} vídeo{batch.items.length > 1 ? 's' : ''})
+                    </h3>
+                    <span className="muted">
+                      {batch.items[0].scheduledLocal} →{' '}
+                      {batch.items[batch.items.length - 1].scheduledLocal}
+                    </span>
+                  </div>
+                  {batch.items.map((it, i) => (
+                    <VideoCard
+                      key={it.id}
+                      item={it}
+                      index={i}
+                      total={batch.items.length}
+                      batchPlatforms={batch.platforms}
+                      connections={connections}
+                      upload={uploads[it.id]}
+                      tiktokPrivacyOptions={tiktokPrivacy}
+                      isDragOver={dropTarget === it.id && dragItem !== it.id}
+                      dragProps={{
+                        draggable: true,
+                        onDragStart: (e) => {
+                          setDragItem(it.id);
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', it.id);
+                        },
+                        onDragOver: (e) => {
+                          if (dragItem) {
+                            e.preventDefault();
+                            setDropTarget(it.id);
+                          }
+                        },
+                        onDrop: (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          dropOn(it.id);
+                          setDragItem(null);
+                          setDropTarget(null);
+                        },
+                        onDragEnd: () => {
+                          setDragItem(null);
+                          setDropTarget(null);
+                        },
+                      }}
+                      onTexts={(id, p, patch) => queuePatch(id, { platforms: { [p]: patch } })}
+                      onFrame={(id, ms) => queuePatch(id, { coverFrameMs: ms })}
+                      onMove={move}
+                      onRemove={remove}
+                      onCover={setCover}
+                      onRemoveCover={async (id) =>
+                        setBatch(mergeKeepingTexts(batch, await api.deleteCover(batch.id, id)))
+                      }
+                      onReupload={(id, file) => {
+                        setUploads((u) => ({
+                          ...u,
+                          [id]: { pct: 0, active: true, objectUrl: URL.createObjectURL(file) },
+                        }));
+                        void runUploads(batch, [{ itemId: id, file }]);
+                      }}
+                    />
+                  ))}
+                  <div className="actions-bar">
+                    <button className="primary big" onClick={review} disabled={anyUploading}>
+                      {anyUploading ? 'Aguardando envios…' : 'Revisar e agendar'}
+                    </button>
+                  </div>
+                </section>
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+        <aside className="batch-preview advanced-preview">
+          <div className="preview-top">
+            <span className="eyebrow">REGISTROS DO SERVIDOR</span>
+            <h2>
+              Prévia do lote
+              <Icon name="spark" size={19} />
+            </h2>
+          </div>
+          <div className="preview-stats">
+            <div>
+              <strong>{batch?.items.length ?? 0}</strong>
+              <span>vídeos</span>
+            </div>
+            <div>
+              <strong>{batch ? PLATFORMS.filter((p) => batch.platforms[p]).length : 0}</strong>
+              <span>plataformas</span>
+            </div>
+            <div>
+              <strong>{settings.publishTime}</strong>
+              <span>todos os dias</span>
+            </div>
+          </div>
+          <div className="preview-schedule">
+            <div className="list-label">
+              <span>CONTEÚDO</span>
+              <span>PUBLICAÇÃO</span>
+            </div>
+            {batch?.items.length ? (
+              <ol className="schedule-lines">
+                {batch.items.map((item) => (
+                  <li key={item.id}>
+                    <span className="timeline-dot" />
+                    <div className="schedule-name">
+                      <strong title={item.originalName}>{item.originalName}</strong>
+                      <span>
+                        {item.uploadStatus === 'ready'
+                          ? 'Arquivo disponível'
+                          : item.uploadStatus === 'uploading'
+                            ? 'Enviando arquivo'
+                            : item.uploadStatus === 'error'
+                              ? 'Envio precisa de atenção'
+                              : 'Aguardando arquivo'}
+                      </span>
+                    </div>
+                    <div className="schedule-date">
+                      <strong>{item.scheduledLocal.slice(0, 10)}</strong>
+                      <span>{settings.publishTime}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="preview-empty">
+                <Icon name="calendar" size={32} />
+                <strong>Prepare seu próximo lote</strong>
+                <p>Escolha a data inicial e adicione seus vídeos.</p>
+              </div>
+            )}
+          </div>
+          <div className="preview-save">
+            <p>
+              <Icon name="shield" size={14} />
+              Rascunhos guardados no servidor.
+            </p>
+            <p>Confira as conexões e revise o lote antes de confirmar.</p>
+          </div>
+        </aside>
+      </div>
 
       {summary && batch && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Resumo do agendamento">
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Resumo do agendamento"
+        >
           <div className="modal wide">
             <h2>Resumo antes de agendar</h2>
-            {settings.mode === 'demo' && <div className="alert demo">Modo demonstração: as publicações serão simuladas.</div>}
+            {settings.mode === 'demo' && (
+              <div className="alert demo">Modo demonstração: as publicações serão simuladas.</div>
+            )}
             <table className="summary-table">
               <thead>
                 <tr>
@@ -463,7 +638,9 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
                       {r.platforms.length === 0 && <span className="muted">nenhuma</span>}
                       {r.platforms.map((p) => (
                         <div key={p.platform}>
-                          <span className={`dot ${p.platform}`} /> {PLATFORM_LABEL[p.platform]} — {p.account ?? <em className="err">sem conta</em>} <small className="muted">({p.mode})</small>
+                          <span className={`dot ${p.platform}`} /> {PLATFORM_LABEL[p.platform]} —{' '}
+                          {p.account ?? <em className="err">sem conta</em>}{' '}
+                          <small className="muted">({p.mode})</small>
                         </div>
                       ))}
                     </td>
@@ -484,7 +661,11 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
               <button onClick={() => setSummary(null)} disabled={busy}>
                 Voltar e editar
               </button>
-              <button className="primary" onClick={doConfirm} disabled={!summary.canConfirm || busy}>
+              <button
+                className="primary"
+                onClick={doConfirm}
+                disabled={!summary.canConfirm || busy}
+              >
                 {busy ? 'Registrando…' : 'Confirmar agendamento'}
               </button>
             </div>
@@ -499,7 +680,7 @@ function connLabel(c?: ConnectionDTO): string {
   if (!c) return '';
   if (c.platform === 'tiktok' && c.capabilities.length === 1) return 'manual';
   if (c.needsReconnect) return 'reconectar';
-  return c.connected ? c.accountName ?? 'conectado' : 'não conectado';
+  return c.connected ? (c.accountName ?? 'conectado') : 'não conectado';
 }
 
 /** Junta a resposta do servidor sem perder textos que ainda estão sendo digitados. */
