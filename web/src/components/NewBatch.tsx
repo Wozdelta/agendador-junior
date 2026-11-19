@@ -9,6 +9,7 @@ import type {
 } from '../../../server/src/shared/types';
 import { PLATFORM_LABEL, PLATFORMS } from '../../../server/src/shared/types';
 import { api, ApiError, idemKey, uploadFile } from '../lib/api';
+import { buildGroups, filesFromDrop, filesFromInput, type ImportGroup } from '../lib/folder-import';
 import { isValidBrDate } from '../lib/date';
 import { DateField } from './DateField';
 import { VideoCard, type UploadState } from './VideoCard';
@@ -45,6 +46,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ count: number } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const pending = useRef<Map<string, Patch>>(new Map());
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<void> | null>(null);
@@ -180,7 +182,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
   };
 
   // ---------- vídeos ----------
-  const runUploads = async (b: BatchDTO, pairs: Array<{ itemId: string; file: File }>) => {
+  const runUploads = async (b: BatchDTO, pairs: Array<{ itemId: string; file: File; cover?: File }>) => {
     const queue = [...pairs];
     const worker = async () => {
       for (let next = queue.shift(); next; next = queue.shift()) {
@@ -194,6 +196,15 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
           );
           setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb));
           setUploads((u) => ({ ...u, [itemId]: { ...u[itemId], pct: 100, active: false } }));
+          if (next.cover) {
+            const coverTarget = nb.items.find((i) => i.id === itemId)?.coverUploadUrl ?? `/api/batches/${b.id}/items/${itemId}/cover`;
+            try {
+              const cb = await uploadFile(coverTarget, next.cover, () => undefined);
+              setBatch((cur) => (cur ? mergeKeepingTexts(cur, cb) : cb));
+            } catch (e: any) {
+              setError(`Capa de ${file.name}: ${e.message}`);
+            }
+          }
         } catch (e: any) {
           setUploads((u) => ({
             ...u,
@@ -209,25 +220,47 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
     await Promise.all(Array.from({ length: UPLOAD_CONCURRENCY }, worker));
   };
 
-  const addFiles = async (list: FileList | File[]) => {
+  const addFiles = async (list: FileList | File[] | ImportGroup[]) => {
     if (!batch) return;
-    const files = Array.from(list); // ordem recebida pelo navegador
-    if (files.length === 0) return;
+    const groups: ImportGroup[] = Array.from(list as ArrayLike<File | ImportGroup>).map((x) =>
+      x instanceof File ? { name: x.name, video: x } : x,
+    );
+    const files = groups.map((g) => g.video); // ordem recebida pelo navegador
+    if (files.length === 0) {
+      setError('Nenhum vídeo MP4/MOV encontrado no que foi solto.');
+      return;
+    }
     setError(null);
     try {
       const { batch: nb, itemIds } = await api.reserveItems(
         batch.id,
         files.map((f) => ({ name: f.name, size: f.size })),
       );
-      const pairs = itemIds.map((itemId, i) => ({ itemId, file: files[i] }));
+      const pairs = itemIds.map((itemId, i) => ({ itemId, file: files[i], cover: groups[i].cover }));
+      // Textos do .txt: grava antes do envio para aparecerem logo nos cartões.
+      let withTexts = nb;
+      for (let i = 0; i < itemIds.length; i++) {
+        const texts = groups[i].texts;
+        if (!texts || !Object.keys(texts).length) continue;
+        try {
+          withTexts = await api.patchItem(nb.id, itemIds[i], { platforms: texts });
+        } catch (e: any) {
+          setError(`Textos de ${groups[i].name}: ${e.message}`);
+        }
+      }
       setUploads((u) => {
         const next = { ...u };
         for (const { itemId, file } of pairs)
           next[itemId] = { pct: 0, active: true, objectUrl: URL.createObjectURL(file) };
         return next;
       });
-      setBatch((cur) => (cur ? mergeKeepingTexts(cur, nb) : nb));
-      await runUploads(nb, pairs);
+      // Itens novos entram com os textos do servidor (mergeKeepingTexts só preserva os já existentes).
+      setBatch((cur) => {
+        if (!cur) return withTexts;
+        const merged = mergeKeepingTexts(cur, withTexts);
+        return { ...merged, items: merged.items.map((it) => (itemIds.includes(it.id) ? withTexts.items.find((x) => x.id === it.id) ?? it : it)) };
+      });
+      await runUploads(withTexts, pairs);
     } catch (e: any) {
       setError(e.message);
     }
@@ -477,23 +510,38 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
                 }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={(e) => {
-                  if (!e.dataTransfer.files.length) return;
+                  if (!e.dataTransfer.files.length && !e.dataTransfer.items?.length) return;
                   e.preventDefault();
                   setDragOver(false);
-                  void addFiles(e.dataTransfer.files);
+                  void filesFromDrop(e.dataTransfer).then(buildGroups).then(addFiles).catch((err) => setError(err.message));
                 }}
               >
                 <p>
-                  <strong>Arraste e solte um ou vários vídeos aqui</strong>
+                  <strong>Arraste vídeos ou pastas aqui</strong>
                   <br />
                   <span className="muted">
-                    MP4 ou MOV. A ordem recebida vira a ordem inicial — reorganize depois se quiser.
+                    MP4 ou MOV. Em cada pasta, o vídeo, a imagem JPG vira a capa e o .txt preenche títulos e descrições.
                   </span>
                 </p>
                 <button className="primary" onClick={() => fileInput.current?.click()}>
                   <Icon name="plus" size={17} />
                   Selecionar arquivos
                 </button>
+                <button onClick={() => folderInput.current?.click()}>
+                  <Icon name="plus" size={17} />
+                  Selecionar pasta
+                </button>
+                <input
+                  ref={folderInput}
+                  type="file"
+                  multiple
+                  hidden
+                  {...({ webkitdirectory: '', directory: '' } as any)}
+                  onChange={(e) => {
+                    if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(addFiles).catch((err) => setError(err.message));
+                    e.target.value = '';
+                  }}
+                />
                 <input
                   ref={fileInput}
                   type="file"
