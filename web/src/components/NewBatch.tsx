@@ -440,14 +440,16 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
               <section className="panel">
                 <h3>Redes do lote</h3>
                 <div className="platform-toggles">
-                  {PLATFORMS.map((p) => (
+                  {PLATFORMS.map((p) => { const off = !!connections.find((c) => c.platform === p)?.maintenance; return (
                     <label
                       key={p}
                       className={`platform-card ${p} ${batch.platforms[p] ? 'is-selected' : ''}`}
+                      style={off ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
                     >
                       <input
                         type="checkbox"
                         checked={batch.platforms[p]}
+                        disabled={off && !batch.platforms[p]}
                         onChange={(e) => togglePlatform(p, e.target.checked)}
                       />
                       <span className="platform-avatar">
@@ -461,7 +463,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
                         <Icon name="check" size={13} />
                       </span>
                     </label>
-                  ))}
+                  ); })}
                 </div>
               </section>
 
@@ -720,6 +722,7 @@ export function NewBatch({ settings }: { settings: SettingsDTO }) {
 function connLabel(c?: ConnectionDTO): string {
   if (!c) return '';
   if (c.needsReconnect) return 'reconectar';
+  if(c.maintenance)return 'em manutenção';
   if(!c.connected)return 'não conectado';
   if(c.platform==='tiktok') {
     const method=c.capabilities.includes('direct')?'Direct Post':c.capabilities.includes('inbox')?'Caixa de entrada':'Publicação manual';

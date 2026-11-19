@@ -173,6 +173,7 @@ export type TaskAction =
 
 export interface ConnectionDTO {
   schedulerConfigured?: boolean;
+  maintenance?: boolean;
   analytics?: { state: import('./analytics.js').DataState; missingScopes: string[]; lastSync?: string };
   monetization?: 'permission_granted' | 'unavailable';
   canConnect?: boolean;

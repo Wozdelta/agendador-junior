@@ -1,5 +1,5 @@
 import { tiktokFields } from './publication-fields.js';
-import { cloudPublicationQueue } from '../lib/publication-execution.js';
+import { cloudPublicationQueue, TIKTOK_MAINTENANCE, TIKTOK_MAINTENANCE_MESSAGE } from '../lib/publication-execution.js';
 import { openMedia } from '../lib/mediaio.js';
 // TikTok — Login Kit (Web) + Content Posting API (consultada em 14/11/2026).
 // Padrão pessoal: "Ação manual necessária" (copiar descrição + baixar vídeo).
@@ -130,7 +130,9 @@ export class TikTokAdapter implements PlatformAdapter {
       accountName: c?.accountName,
       accountId: c?.accountId,
       capabilities: ['manual', ...(m !== 'manual' ? [m] : [])],
+      maintenance: TIKTOK_MAINTENANCE || undefined,
       notes: [
+        TIKTOK_MAINTENANCE ? TIKTOK_MAINTENANCE_MESSAGE : '',
         this.ctx.config.runtime==='vercel'&&m!=='manual' ? (cloudPublicationQueue(this.ctx)?'O executor na nuvem processa os envios autorizados. Direct Post publica; caixa de entrada exige conclusão no app.':'A publicação via API está autorizada, mas o agendamento depende de configurar o executor na nuvem. Não é necessário manter o PC ligado quando o executor estiver ativo.') : '',
         m === 'manual' ? 'Modo manual: no horário, copie a descrição, baixe o vídeo e publique pelo app do TikTok.' : '',
         m === 'inbox' ? 'Envio à caixa de entrada: o TikTok notifica você para finalizar a publicação no app (máx. 5 pendentes em 24 h).' : '',

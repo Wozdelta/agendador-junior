@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppContext, ModeContext } from '../context.js';
 import { signMediaToken } from '../lib/crypto.js';
+import { storageUrl } from '../lib/supabase.js';
+import { cloudPublicationQueue } from '../lib/publication-execution.js';
 import { AppError, ManualReviewError, PermanentError, RetryableError } from '../lib/errors.js';
 import { request } from '../lib/http.js';
 import { toJpeg } from '../lib/media.js';
@@ -18,8 +20,10 @@ import { graph, handleMetaAuthFailure, metaError, selectedPage } from './meta.js
 import { getConn } from './tokens.js';
 import type { AccountChoice, PlatformAdapter, TaskRuntime } from './types.js';
 
-export function publicMediaUrl(ctx: AppContext, mc: ModeContext, m: MediaRecord): string | null {
+export async function publicMediaUrl(ctx: AppContext, mc: ModeContext, m: MediaRecord): Promise<string | null> {
   if (m.blobUrl) return m.blobUrl;
+  // Mídia no Supabase Storage: link assinado temporário para a Meta baixar.
+  if (m.storagePath) return storageUrl(ctx.config, m.storagePath, ctx.fetch, 3600);
   if (!ctx.config.publicBaseUrl) return null;
   const exp = ctx.clock.now().getTime() + ctx.config.mediaLinkTtlMinutes * 60_000;
   // O token amarra modo + nome interno do arquivo + validade: serve só aquele arquivo.
@@ -38,7 +42,7 @@ export class InstagramAdapter implements PlatformAdapter {
     const page = c.pages?.find((p) => p.id === c.selectedPageId);
     if (!page) throw new AppError(422, 'Escolha a Página do Facebook vinculada ao Instagram em "Conexões".');
     if (!page.instagram) throw new AppError(422, `A Página "${page.name}" não tem conta profissional do Instagram vinculada.`);
-    if (!this.ctx.config.meta.igResumable && !this.ctx.config.publicBaseUrl) {
+    if (!this.ctx.config.meta.igResumable && !this.ctx.config.publicBaseUrl && this.ctx.config.mediaStorage !== 'supabase') {
       throw new AppError(422, 'Instagram: configure PUBLIC_BASE_URL (HTTPS) para a Meta baixar o vídeo, ou ative IG_RESUMABLE_UPLOAD (requer Facebook Login for Business).');
     }
     return { accountId: page.instagram.id, accountName: `@${page.instagram.username}`, strategy: 'queue' };
@@ -64,7 +68,7 @@ export class InstagramAdapter implements PlatformAdapter {
       capabilities: caps,
       notes: [
         page && !page.instagram ? `A Página "${page.name}" não tem conta profissional do Instagram vinculada.` : '',
-        cfg.runtime === 'vercel' ? 'Instagram disponível para publicação manual; esta versão não executa publicações futuras.' : 'O Instagram não tem agendamento nativo pela API: a fila local publica no horário enquanto o servidor estiver ligado.',
+        cfg.runtime === 'vercel' ? (cloudPublicationQueue(this.ctx) ? 'O executor na nuvem cria o Reel antes do horário e publica no horário planejado.' : 'Instagram disponível para publicação manual; ative PUBLICATION_SCHEDULER_ENABLED para publicar automaticamente.') : 'O Instagram não tem agendamento nativo pela API: a fila local publica no horário enquanto o servidor estiver ligado.',
         cfg.publicBaseUrl ? '' : 'Sem PUBLIC_BASE_URL: a capa usa um quadro (thumb_offset) e a imagem fica para uso manual.',
       ].filter(Boolean),
     };
@@ -122,6 +126,7 @@ export class InstagramAdapter implements PlatformAdapter {
 
   private async coverUrl(rt: TaskRuntime): Promise<string | null> {
     const cover = rt.cover();
+    if (cover?.storagePath) return cover.mime === 'image/jpeg' ? publicMediaUrl(this.ctx, rt.mc, cover) : null;
     if (!cover || !this.ctx.config.publicBaseUrl) return null;
     if (cover.blobUrl) return cover.mime === 'image/jpeg' ? cover.blobUrl : null;
     let jpeg = cover;
@@ -142,7 +147,7 @@ export class InstagramAdapter implements PlatformAdapter {
     const params: Record<string, any> = { media_type: 'REELS', ...instagramFields(t) };
     if (resumable) params.upload_type = 'resumable';
     else {
-      const url = publicMediaUrl(this.ctx, rt.mc, rt.media());
+      const url = await publicMediaUrl(this.ctx, rt.mc, rt.media());
       if (!url) throw new PermanentError('PUBLIC_BASE_URL não configurado: a Meta não tem como baixar o vídeo.');
       params.video_url = url;
       params.share_to_feed = true;

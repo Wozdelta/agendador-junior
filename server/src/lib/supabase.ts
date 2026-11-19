@@ -72,10 +72,10 @@ export class SupabaseBackend<T extends { id: string }> implements CollectionBack
   }
 }
 export const MEDIA_BUCKET = 'agendador-media';
-export async function storageUrl(config: Config, path: string, fetchImpl: typeof fetch = fetch) {
+export async function storageUrl(config: Config, path: string, fetchImpl: typeof fetch = fetch, ttlSeconds = 600) {
   const { data, error } = await supabase(config, true, fetchImpl)
     .storage.from(MEDIA_BUCKET)
-    .createSignedUrl(path, 600);
+    .createSignedUrl(path, ttlSeconds);
   if (error) throw new AppError(503, 'Arquivo indisponível no Storage. Tente de novo.');
   return data.signedUrl;
 }

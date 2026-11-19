@@ -1,5 +1,5 @@
 import { deleteMediaObject } from '../lib/mediaio.js';
-import { cloudPublicationQueue } from '../lib/publication-execution.js';
+import { cloudPublicationQueue, TIKTOK_MAINTENANCE, TIKTOK_MAINTENANCE_MESSAGE } from '../lib/publication-execution.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -99,7 +99,7 @@ export async function createDraft(ctx: AppContext, startDateInput: unknown): Pro
     startDate,
     timezone: ctx.config.timezone,
     publishTime: ctx.config.publishTime,
-    platforms: { facebook: true, youtube: true, instagram: true, tiktok: true },
+    platforms: { facebook: true, youtube: true, instagram: true, tiktok: !TIKTOK_MAINTENANCE },
     items: [],
     createdAt: now,
     updatedAt: now,
@@ -188,7 +188,8 @@ export async function removeMediaFile(ctx: AppContext, mc: ModeContext, mediaId?
 }
 
 function accountFor(ctx: AppContext, mc: ModeContext, p: Platform): AccountChoice {
-  if (ctx.config.runtime === 'vercel' && p === 'instagram') return { accountId: 'manual', accountName: 'Publicação manual na plataforma', strategy: 'manual' };
+  if (p === 'tiktok' && TIKTOK_MAINTENANCE) throw new AppError(422, `${TIKTOK_MAINTENANCE_MESSAGE} Desmarque o TikTok no lote.`);
+  if (ctx.config.runtime === 'vercel' && p === 'instagram' && !cloudPublicationQueue(ctx)) return { accountId: 'manual', accountName: 'Publicação manual na plataforma', strategy: 'manual' };
   return adapterFor(ctx, mc.mode, p).account(mc);
 }
 
@@ -258,7 +259,7 @@ export function summarize(ctx: AppContext, mc: ModeContext, b: Batch): BatchSumm
     }
   }
   if (enabled.includes('instagram')) {
-    issues.push({ level: 'info', platform: 'instagram', message: ctx.config.runtime === 'vercel' ? 'Instagram: publique manualmente no horário planejado. Não há execução futura nesta versão.' : 'Instagram: a publicação acontece pela fila local às 12:00.' });
+    issues.push({ level: 'info', platform: 'instagram', message: ctx.config.runtime === 'vercel' ? (cloudPublicationQueue(ctx) ? 'Instagram: o executor na nuvem publica automaticamente no horário planejado.' : 'Instagram: publique manualmente no horário planejado. Ative PUBLICATION_SCHEDULER_ENABLED para publicar automaticamente.') : 'Instagram: a publicação acontece pela fila local às 12:00.' });
   }
   if (enabled.includes('tiktok')) {
     const a = accounts.tiktok;
