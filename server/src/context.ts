@@ -13,6 +13,7 @@ import type { FetchLike } from './lib/http.js';
 import { KeyedMutex } from './lib/mutex.js';
 import { deriveKey } from './lib/session.js';
 import type { Batch, ConnectionsDoc, IdemRecord, MediaRecord, Task } from './domain/model.js';
+import type { PostRecord } from './shared/types.js';
 
 export interface DemoFault {
   /** fail = falha definitiva; transient = falha temporária; timeout = cria remoto e perde a resposta;
@@ -35,6 +36,8 @@ export interface ModeContext {
   idem: JsonCollection<IdemRecord>;
   connections: JsonDoc<ConnectionsDoc>;
   demo: JsonDoc<DemoDoc>;
+  /** Histórico do envio direto (vídeo, rede, data, link). */
+  posts: JsonCollection<PostRecord>;
 }
 
 
@@ -109,6 +112,7 @@ async function createMode(mode: AppMode, root: string, f: Factory, lazy = false,
     idem: await ready(new JsonCollection<IdemRecord>(f.col(mode, 'idempotency'))),
     connections: await ready(new JsonDoc<ConnectionsDoc>(f.doc(mode, 'connections'), {})),
     demo: await ready(new JsonDoc<DemoDoc>(f.doc(mode, 'demo-remote'), { faults: {}, remote: {} })),
+    posts: await ready(new JsonCollection<PostRecord>(f.col(mode, 'posts'))),
   };
 }
 

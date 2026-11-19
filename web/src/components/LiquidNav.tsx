@@ -13,8 +13,8 @@ import {
 
 export const NAV_ITEMS: { id: string; label: string; icon: IconName }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { id: 'novo', label: 'Novo lote', icon: 'video' },
-  { id: 'agenda', label: 'Agenda', icon: 'calendar' },
+  { id: 'novo', label: 'Postar', icon: 'video' },
+  { id: 'agenda', label: 'Histórico', icon: 'calendar' },
   { id: 'conexoes', label: 'Conexões', icon: 'link' },
   { id: 'config', label: 'Configurações', icon: 'settings' },
 ];

@@ -14,12 +14,13 @@ import { LiquidNav } from './components/LiquidNav';
 import { BrandMark, Icon } from './components/ui/Icon';
 import { GlassEffects } from './components/ui/GlassEffects';
 import { MotionPreview } from './components/MotionPreview';
+import { DirectPost, PostHistory } from './components/DirectPost';
 
 type Route = 'novo' | 'agenda' | 'conexoes' | 'config' | 'motion' | 'dashboard';
 const ROUTES: Array<{ id: Route; label: string }> = [
   { id: 'dashboard', label: 'Dashboard' },
-  { id: 'novo', label: 'Novo lote' },
-  { id: 'agenda', label: 'Agenda' },
+  { id: 'novo', label: 'Postar' },
+  { id: 'agenda', label: 'Histórico' },
   { id: 'conexoes', label: 'Conexões' },
   { id: 'config', label: 'Configurações' },
 ];
@@ -118,29 +119,13 @@ function MainApp() {
             {backendError} <button onClick={loadSettings}>Tentar de novo</button>
           </div>
         )}
-        {route==='novo'&&advanced&&<section className="publication-mode" aria-label="Modo de publicação">
-          <div className="publication-mode-options"><button className={uploadMode?'active':''} aria-pressed={uploadMode} onClick={()=>setUploadMode(true)}><Icon name="upload" size={18}/><span>Publicar com arquivos<small>Vídeos, thumbnail e agendamento</small></span></button><button className={!uploadMode?'active':''} aria-pressed={!uploadMode} onClick={()=>setUploadMode(false)}><Icon name="calendar" size={18}/><span>Agenda manual<small>Organizar para publicar depois</small></span></button></div>
-          <p>{uploadMode?'Envie os arquivos e revise o envio de cada rede. Seus rascunhos manuais continuam disponíveis na opção ao lado.':'Neste modo são salvos somente os nomes e textos. Para enviar vídeo e thumbnail, escolha Publicar com arquivos.'}</p>
-        </section>}
-        {route==='novo'&&settings&&!advanced&&<div className="work-panel publication-availability"><h3>O envio de vídeos e thumbnails precisa de armazenamento</h3><p>As permissões conectam suas contas. Para guardar e enviar os arquivos, o armazenamento de mídia também precisa estar configurado no servidor.</p><a href="#/config" className="button">Ver configurações</a></div>}
-        {route==='novo'&&settingsLoading&&!settings&&<p role="status">Verificando envio de vídeos e capas…</p>}
-        {(!settingsLoading || !!settings) && (!advanced || !uploadMode) && (
-          <div hidden={route !== 'novo'} className={route === 'novo' ? 'page-enter' : ''}>
-            <ManualAgenda view="create" />
-          </div>
-        )}
-        {uploadMode && advanced && settings && route === 'novo' && (
+        {route === 'novo' && (
           <div className="page-enter">
-            <NewBatch settings={settings} key={settings.mode} />
+            <DirectPost />
           </div>
         )}
         <div key={route} className="page-enter route-content">
-          {route === 'agenda' &&
-            (settings ? (
-              <Agenda settings={settings} key={settings.mode} />
-            ) : (
-              <ManualAgenda view="agenda" />
-            ))}
+          {route === 'agenda' && <PostHistory />}
           {settings && route === 'conexoes' && (
             <Connections settings={settings} key={settings.mode} />
           )}

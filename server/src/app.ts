@@ -3,6 +3,7 @@ import { analyticsRoutes, analyticsCron } from './routes/analytics.js';
 import { publicationCron } from './routes/publication.js';
 import { authRoutes, authenticate } from './routes/auth.js';
 import { manualRoutes } from './routes/manual.js';
+import { directRoutes } from './routes/direct.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
@@ -29,6 +30,7 @@ export function createApp(ctx: AppContext, authorize: express.RequestHandler = a
   api.use(publicationCron(ctx));
   api.use(authorize);
   api.use(manualRoutes(ctx));
+  api.use(directRoutes(ctx));
   api.use(migrationRoutes(ctx));
   api.use(prepareRequest(ctx));
   api.use(cloudRoutes(ctx));

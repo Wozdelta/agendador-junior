@@ -1,0 +1,158 @@
+// Envio direto do navegador para as redes. O arquivo sai do seu computador
+// direto para o YouTube/Facebook; o servidor do app não guarda o vídeo.
+import type { Platform, PostRecord } from '../../../server/src/shared/types';
+
+export interface DirectSession {
+  graphVersion: string;
+  youtube?: { accessToken: string };
+  facebook?: { pageId: string; pageName: string; pageToken: string };
+  instagram?: { igId: string; username: string };
+  errors: Partial<Record<Platform, string>>;
+}
+
+type Progress = (pct: number) => void;
+
+async function json<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method, credentials: 'same-origin',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error ?? `Erro ${res.status}`);
+  return data as T;
+}
+
+export const directApi = {
+  session: () => json<DirectSession>('POST', '/api/direct/session'),
+  posts: () => json<PostRecord[]>('GET', '/api/direct/posts'),
+  savePost: (p: Partial<PostRecord> & Pick<PostRecord, 'platform' | 'status'>) => json<PostRecord>('POST', '/api/direct/posts', p),
+  deletePost: (id: string) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}`),
+  igStart: (facebookVideoId: string, caption: string) =>
+    json<{ state: 'waiting' | 'processing'; containerId?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
+  igCheck: (containerId: string, deleteFacebookVideoId?: string) =>
+    json<{ state: 'processing' | 'published'; id?: string; url?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId }),
+};
+
+/** PUT/POST com progresso (fetch não informa progresso de envio). */
+function xhr(method: string, url: string, body: Blob | FormData, headers: Record<string, string>, onProgress?: Progress): Promise<{ status: number; json: any }> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open(method, url);
+    for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+    if (onProgress) x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+    x.onload = () => {
+      let j: any = null;
+      try { j = JSON.parse(x.responseText); } catch {}
+      resolve({ status: x.status, json: j });
+    };
+    x.onerror = () => reject(new Error('Falha de rede durante o envio. Confira a internet e tente de novo.'));
+    x.send(body);
+  });
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------- YouTube ----------------
+export async function uploadYouTube(
+  s: DirectSession, video: File, cover: File | undefined,
+  meta: { title: string; description: string; publishAt?: Date }, onProgress: Progress,
+): Promise<{ id: string; url: string; note?: string }> {
+  const token = s.youtube?.accessToken;
+  if (!token) throw new Error(s.errors.youtube ?? 'YouTube não conectado.');
+  const future = meta.publishAt && meta.publishAt.getTime() > Date.now() + 60_000;
+  const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Length': String(video.size),
+      'X-Upload-Content-Type': video.type || 'video/mp4',
+    },
+    body: JSON.stringify({
+      snippet: { title: meta.title.slice(0, 100), description: meta.description.replace(/[<>]/g, ''), categoryId: '22' },
+      status: future
+        ? { privacyStatus: 'private', publishAt: meta.publishAt!.toISOString(), selfDeclaredMadeForKids: false }
+        : { privacyStatus: 'public', selfDeclaredMadeForKids: false },
+    }),
+  });
+  if (!init.ok) {
+    const e = await init.json().catch(() => ({}));
+    throw new Error(`YouTube recusou o envio: ${e?.error?.message ?? init.status}`);
+  }
+  const location = init.headers.get('Location');
+  if (!location) throw new Error('YouTube não devolveu o endereço de envio.');
+  const up = await xhr('PUT', location, video, { 'Content-Type': video.type || 'video/mp4' }, onProgress);
+  if (up.status !== 200 && up.status !== 201) throw new Error(`YouTube: envio falhou (${up.json?.error?.message ?? up.status}).`);
+  const id = up.json.id as string;
+  let note: string | undefined;
+  if (cover) {
+    const t = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${id}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' }, body: cover,
+    });
+    if (!t.ok) {
+      const e = await t.json().catch(() => ({}));
+      note = `Capa não aplicada: ${e?.error?.message ?? t.status} (o canal precisa estar verificado para usar capa personalizada).`;
+    }
+  }
+  return { id, url: `https://youtube.com/shorts/${id}`, note };
+}
+
+// ---------------- Facebook ----------------
+const CHUNK = 8 * 1024 * 1024;
+
+export async function uploadFacebook(
+  s: DirectSession, video: File, cover: File | undefined,
+  meta: { title: string; description: string; publishAt?: Date; hidden?: boolean }, onProgress: Progress,
+): Promise<{ id: string; url?: string }> {
+  const fb = s.facebook;
+  if (!fb) throw new Error(s.errors.facebook ?? 'Facebook não conectado.');
+  const endpoint = `https://graph-video.facebook.com/${s.graphVersion}/${fb.pageId}/videos`;
+  const post = async (fields: Record<string, string | Blob>, progress?: Progress) => {
+    const f = new FormData();
+    f.set('access_token', fb.pageToken);
+    for (const [k, v] of Object.entries(fields)) f.set(k, v);
+    const r = await xhr('POST', endpoint, f, {}, progress);
+    if (r.status !== 200 || r.json?.error) throw new Error(`Facebook: ${r.json?.error?.error_user_msg ?? r.json?.error?.message ?? `HTTP ${r.status}`}`);
+    return r.json;
+  };
+  const start = await post({ upload_phase: 'start', file_size: String(video.size) });
+  const session = start.upload_session_id as string;
+  const videoId = String(start.video_id);
+  let from = Number(start.start_offset), to = Number(start.end_offset);
+  while (from < to) {
+    const base = from;
+    const r = await post(
+      { upload_phase: 'transfer', upload_session_id: session, start_offset: String(from), video_file_chunk: video.slice(from, Math.min(to, from + CHUNK)) },
+      (pct) => onProgress(Math.round(((base + (pct / 100) * (to - base)) / video.size) * 100)),
+    );
+    from = Number(r.start_offset); to = Number(r.end_offset);
+  }
+  const future = meta.publishAt && meta.publishAt.getTime() > Date.now() + 11 * 60_000;
+  const finish: Record<string, string | Blob> = { upload_phase: 'finish', upload_session_id: session, title: meta.title, description: meta.description };
+  if (meta.hidden) { finish.published = 'false'; }
+  else if (future) { finish.published = 'false'; finish.scheduled_publish_time = String(Math.floor(meta.publishAt!.getTime() / 1000)); }
+  if (cover) finish.thumb = cover;
+  await post(finish);
+  onProgress(100);
+  return { id: videoId, url: meta.hidden ? undefined : `https://www.facebook.com/${fb.pageId}/videos/${videoId}` };
+}
+
+// ---------------- Instagram (agora) ----------------
+export async function publishInstagram(facebookVideoId: string, caption: string, deleteCarrier: boolean, onStatus: (msg: string) => void) {
+  let containerId: string | undefined;
+  const deadline = Date.now() + 15 * 60_000;
+  while (!containerId) {
+    if (Date.now() > deadline) throw new Error('O Facebook demorou demais para processar o vídeo; o Instagram não foi publicado.');
+    const r = await directApi.igStart(facebookVideoId, caption);
+    if (r.containerId) containerId = r.containerId;
+    else { onStatus('Aguardando o Facebook processar o vídeo…'); await sleep(8000); }
+  }
+  for (;;) {
+    if (Date.now() > deadline) throw new Error('O Instagram demorou demais para processar o vídeo.');
+    onStatus('Instagram processando o Reel…');
+    await sleep(6000);
+    const r = await directApi.igCheck(containerId, deleteCarrier ? facebookVideoId : undefined);
+    if (r.state === 'published') return r;
+  }
+}

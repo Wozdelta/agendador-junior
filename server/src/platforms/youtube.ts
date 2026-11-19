@@ -144,7 +144,7 @@ export class YouTubeAdapter implements PlatformAdapter {
     };
   }
 
-  private async token(rt: { ctx: AppContext; mc: ModeContext }): Promise<string> {
+  async token(rt: { ctx: AppContext; mc: ModeContext }): Promise<string> {
     const { ctx, mc } = rt;
     const t = readTokens<GoogleTokens>(ctx, mc, 'youtube');
     if (t.expires_at - 60_000 > ctx.clock.now().getTime()) return t.access_token;

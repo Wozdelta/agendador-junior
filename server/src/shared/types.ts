@@ -210,3 +210,20 @@ export interface SettingsDTO {
   /** Uploads e mídia vão direto ao backend (PUBLIC_BASE_URL configurado). */
   directLinks: boolean;
 }
+
+/** Registro de um envio direto do navegador para uma rede. */
+export interface PostRecord {
+  id: string;
+  /** Nome da pasta ou do arquivo de vídeo. */
+  video: string;
+  platform: Platform;
+  title?: string;
+  status: 'sending' | 'scheduled' | 'published' | 'failed';
+  /** Quando vai ao ar (agendado) ou foi ao ar (publicado). */
+  publishAt?: string;
+  remoteId?: string;
+  url?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
