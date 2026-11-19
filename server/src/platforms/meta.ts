@@ -91,6 +91,12 @@ export async function metaExchange(ctx: AppContext, mc: ModeContext, code: strin
     params: { fields: 'id,name,access_token,tasks,instagram_business_account{id,username}', limit: 100 },
     what: 'Listagem de Páginas',
   });
+  const missing = ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'instagram_content_publish'].filter(p => !granted.includes(p));
+  if (!(pagesRes.data ?? []).length) {
+    throw new AppError(400, missing.length
+      ? `A Meta não liberou as permissões de Página (${missing.join(', ')}). ${ctx.config.meta.configId ? 'A configuração do Facebook Login for Business (META_LOGIN_CONFIG_ID) precisa incluir essas permissões e usar "Token de acesso do usuário"; ou remova META_LOGIN_CONFIG_ID na Vercel.' : 'Entre novamente e marque todas as Páginas e permissões.'}`
+      : 'Nenhuma Página do Facebook foi retornada. Entre novamente e selecione a Página ligada ao Instagram.');
+  }
   const pages = (pagesRes.data ?? []).map((p: any) => ({
     id: p.id,
     name: p.name,
