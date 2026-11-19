@@ -124,7 +124,7 @@ export function loadConfig(overrides: Partial<Config> = {}): Config {
       appSecret: str('META_APP_SECRET'),
       redirectUri: str('META_REDIRECT_URI', `http://localhost:${port}/api/oauth/facebook/callback`),
       graphVersion: str('META_GRAPH_VERSION', 'v27.0'),
-      configId: str('META_LOGIN_CONFIG_ID'),
+      configId: bool('META_USE_LOGIN_CONFIG') ? str('META_LOGIN_CONFIG_ID') : '',
       reelsCustomCover: bool('META_REELS_CUSTOM_COVER', false),
       allowDirectPublishFallback: bool('META_ALLOW_DIRECT_PUBLISH_FALLBACK', false),
       igResumable: bool('IG_RESUMABLE_UPLOAD', false),
