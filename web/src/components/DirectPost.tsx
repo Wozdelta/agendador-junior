@@ -10,9 +10,8 @@ type Net = 'youtube' | 'facebook' | 'instagram';
 const NETS: Array<{ id: Net; label: string; kind: string }> = [
   { id: 'youtube', label: 'YouTube', kind: 'agendado na data' },
   { id: 'facebook', label: 'Facebook', kind: 'agendado na data' },
-  ];
-/** O Instagram é agendado pelo Meta Business Suite (o site só prepara a legenda). */
-const BUSINESS_SUITE = 'https://business.facebook.com/latest/content_calendar?business_id=143015447960628&asset_id=110716134644821';
+  { id: 'instagram', label: 'Instagram', kind: 'agendado na data (o servidor publica)' },
+];
 const NET_LABEL: Record<Platform, string> = { youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok' };
 
 type Phase = 'waiting' | 'sending' | 'processing' | 'scheduled' | 'published' | 'failed' | 'skipped';
@@ -92,7 +91,7 @@ const PHASE_LABEL: Record<Phase, string> = {
 
 export function DirectPost() {
   const [rows, setRows] = useState<Row[]>([]);
-  const [nets, setNets] = useState<Record<Net, boolean>>({ youtube: true, facebook: true, instagram: false });
+  const [nets, setNets] = useState<Record<Net, boolean>>({ youtube: true, facebook: true, instagram: true });
   const [start, setStart] = useState(defaultStart);
   const [everyDays, setEveryDays] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -328,10 +327,6 @@ export function DirectPost() {
               <span className="selection-check"><Icon name="check" size={13} /></span>
             </label>
           ))}
-          <a className="platform-card instagram" href={BUSINESS_SUITE} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-            <span className="platform-avatar"><Icon name="instagram" size={22} /></span>
-            <span className="platform-name">Instagram<small>agende no Business Suite ↗</small></span>
-          </a>
           <label className="platform-card tiktok" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
             <input type="checkbox" disabled checked={false} readOnly />
             <span className="platform-avatar"><Icon name="tiktok" size={22} /></span>
@@ -465,7 +460,7 @@ function DirectCard(props: {
   onCover: (f: File) => void; onMeta: (duration: number, dims: string) => void;
 }) {
   const { row, index, total, when, nets, busy } = props;
-  const enabled: Net[] = [...NETS.filter((n) => nets[n.id]).map((n) => n.id), 'instagram'];
+  const enabled = NETS.filter((n) => nets[n.id]).map((n) => n.id);
   const [tab, setTab] = useState<Net>(enabled[0] ?? 'youtube');
   const cur = enabled.includes(tab) ? tab : enabled[0];
   const coverInput = useRef<HTMLInputElement>(null);
@@ -562,13 +557,8 @@ function DirectCard(props: {
                 <label>{cur === 'instagram' ? 'Legenda' : 'Descrição'}<Counter text={row.texts[cur].description} net={cur} field="description" /></label>
                 <textarea rows={9} value={row.texts[cur].description} disabled={busy} onChange={(e) => props.onText(cur, { description: e.target.value })} />
               </div>
-              {cur === 'instagram' && (
-                <div className="row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button className="small" onClick={() => void navigator.clipboard.writeText(row.texts.instagram.description).then(() => alert('Legenda copiada. Cole no Business Suite.'))}>Copiar legenda</button>
-                  <a className="button small" href={BUSINESS_SUITE} target="_blank" rel="noreferrer">Abrir Business Suite ↗</a>
-                  <span className="field-hint">Agende o Instagram no Business Suite para {fmtDate(when)}.</span>
-                </div>
-              )}
+              {cur === 'facebook' && nets.instagram && <p className="field-hint">O Instagram usa o vídeo enviado ao Facebook.</p>}
+              {cur === 'instagram' && <p className="field-hint">O Instagram publica na hora do envio (a API não permite agendar).</p>}
             </div>
           )}
         </div>
