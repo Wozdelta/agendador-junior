@@ -216,6 +216,8 @@ export interface PostRecord {
   id: string;
   /** Nome da pasta ou do arquivo de vídeo. */
   video: string;
+  /** Identificação do arquivo (nome|tamanho) para avisar de vídeo repetido. */
+  fileKey?: string;
   platform: Platform;
   title?: string;
   status: 'sending' | 'scheduled' | 'published' | 'failed';

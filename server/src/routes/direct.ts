@@ -98,6 +98,7 @@ export function directRoutes(ctx: AppContext): Router {
       const rec: PostRecord = {
         id, platform,
         video: str(b.video, 300) ?? prev?.video ?? 'vídeo',
+        fileKey: str(b.fileKey, 400) ?? prev?.fileKey,
         title: str(b.title, 300) ?? prev?.title,
         status: b.status,
         publishAt: str(b.publishAt, 40) ?? prev?.publishAt,

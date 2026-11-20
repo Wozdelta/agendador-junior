@@ -23,8 +23,13 @@ interface Row extends ImportGroup {
   dims?: string;
   texts: Record<Net, { title: string; description: string }>;
   state: Partial<Record<Net, NetState>>;
+  /** Envios anteriores deste mesmo vídeo (histórico). */
+  posted?: PostRecord[];
 }
 interface LogLine { at: Date; text: string; level: 'info' | 'ok' | 'error' }
+
+const fileKey = (f: File) => `${f.name}|${f.size}`;
+const norm = (t?: string) => (t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase();
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const localInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -87,10 +92,32 @@ export function DirectPost() {
     return () => { clearInterval(t); window.removeEventListener('beforeunload', warn); };
   }, [busy]);
 
-  const add = (groups: ImportGroup[]) => {
+  const [notice, setNotice] = useState<string[]>([]);
+  const add = async (groups: ImportGroup[]) => {
     if (!groups.length) return setError('Nenhum vídeo MP4/MOV encontrado no que foi solto.');
     setError(null);
-    setRows((r) => [...r, ...groups.map((g, i) => toRow(g, r.length + i))]);
+    let history: PostRecord[] = [];
+    try { history = await directApi.posts(); } catch {}
+    const msgs: string[] = [];
+    const inDraft = new Set(rows.map((r) => fileKey(r.video)));
+    const fresh: Row[] = [];
+    groups.forEach((g, i) => {
+      const k = fileKey(g.video);
+      if (inDraft.has(k)) { msgs.push(`"${g.name}" já está no rascunho — não foi adicionado de novo.`); return; }
+      inDraft.add(k);
+      const row = toRow(g, rows.length + i);
+      const titles = [row.texts.youtube.title, row.texts.facebook.title].map(norm).filter(Boolean);
+      const raw = ` ${norm(g.rawText)} `;
+      const sameTitle = (t?: string) => { const n = norm(t); return !!n && n.length > 8 && (titles.includes(n) || raw.includes(` ${n} `)); };
+      const posted = history.filter((p) => p.status !== 'failed' && (p.fileKey === k || norm(p.video) === norm(g.name) || sameTitle(p.title)));
+      if (posted.length) {
+        row.posted = posted;
+        msgs.push(`"${g.name}" já foi ${posted.map((p) => `${p.status === 'scheduled' ? 'programado' : p.status === 'published' ? 'postado' : 'enviado'} no ${NET_LABEL[p.platform]}${p.publishAt ? ` (${fmtDate(new Date(p.publishAt))})` : ''}`).join(', ')}.`);
+      }
+      fresh.push(row);
+    });
+    setNotice(msgs);
+    setRows((r) => [...r, ...fresh]);
   };
   const dateFor = (i: number) => {
     const d = new Date(start);
@@ -131,6 +158,8 @@ export function DirectPost() {
     setError(null);
     if (!rows.length) return setError('Adicione pelo menos um vídeo.');
     if (!nets.youtube && !nets.facebook && !nets.instagram) return setError('Escolha pelo menos uma rede.');
+    const repeated = rows.filter((r) => r.posted?.length);
+    if (repeated.length && !confirm(`${repeated.length} vídeo(s) já foram programados ou postados antes:\n\n${repeated.map((r) => `• ${r.name}`).join('\n')}\n\nPostar de novo mesmo assim? (Cancelar para revisar; use Excluir nos cartões marcados.)`)) return;
     const missing = rows.find((r) => nets.youtube && !r.texts.youtube.title.trim());
     if (missing) return setError(`"${missing.name}": o YouTube exige título.`);
     setBusy(true);
@@ -148,7 +177,7 @@ export function DirectPost() {
         const when = dateFor(i);
         const tag = `[${i + 1}/${rows.length}] ${row.name}`;
         const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
-          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, publishAt: when.toISOString(), ...extra })
+          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, fileKey: fileKey(row.video), publishAt: when.toISOString(), ...extra })
             .catch((e) => say(`Aviso: não salvei no histórico (${e.message}).`, 'error'));
 
         if (nets.youtube) {
@@ -237,6 +266,13 @@ export function DirectPost() {
         </div>
       </div>
       {error && <div className="alert error" role="alert">{error}</div>}
+      {notice.length > 0 && (
+        <div className="alert" role="status">
+          <Icon name="info" />
+          <span>{notice.map((m, i) => <div key={i}>{m}</div>)}</span>
+          <button className="link" onClick={() => setNotice([])}>ok</button>
+        </div>
+      )}
 
       <section className="panel">
         <h3>Redes</h3>
@@ -367,6 +403,11 @@ function DirectCard(props: {
           <button className="small danger" onClick={props.onRemove}>Excluir</button>
         </>}
       </div>
+      {row.posted?.length ? (
+        <div className="alert error" role="status" style={{ margin: '8px 0' }}>
+          ⚠️ Este vídeo já foi {row.posted.map((p) => `${p.status === 'scheduled' ? 'programado' : p.status === 'published' ? 'postado' : 'enviado'} no ${NET_LABEL[p.platform]}${p.publishAt ? ` para ${fmtDate(new Date(p.publishAt))}` : ''}`).join(' · ')}.
+        </div>
+      ) : null}
       <div className="card-body">
         <div className="media-col">
           <video className="preview" src={row.videoUrl} controls muted preload="metadata" playsInline

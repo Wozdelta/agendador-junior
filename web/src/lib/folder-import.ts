@@ -7,6 +7,8 @@ export interface ImportGroup {
   video: File;
   cover?: File;
   texts?: Partial<Record<Platform, Partial<PlatformTexts>>>;
+  /** Conteúdo bruto do .txt (para reconhecer vídeos já postados por títulos alternativos). */
+  rawText?: string;
 }
 
 const isVideo = (f: File) => /\.(mp4|mov)$/i.test(f.name) || /^video\//.test(f.type);
@@ -59,11 +61,13 @@ export async function buildGroups(files: Array<{ file: File; dir: string }>): Pr
       continue;
     }
     const txt = list.find(isText);
+    const raw = txt ? await txt.text() : undefined;
     groups.push({
       name: dir.split('/').pop() || videos[0].name,
       video: videos[0],
       cover: list.find(isImage),
-      texts: txt ? parseTexts(await txt.text()) : undefined,
+      texts: raw ? parseTexts(raw) : undefined,
+      rawText: raw,
     });
   }
   return groups;
