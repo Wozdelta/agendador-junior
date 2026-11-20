@@ -120,7 +120,7 @@ export function directRoutes(ctx: AppContext): Router {
     if (!PLATFORMS.includes(platform)) throw new AppError(400, 'Rede inválida.');
     if (!['sending', 'scheduled', 'published', 'failed'].includes(b.status)) throw new AppError(400, 'Situação inválida.');
     const now = ctx.clock.now().toISOString();
-    const id = str(b.id, 64) || crypto.randomUUID();
+    const id = str(b.id, 300) || crypto.randomUUID();
     let saved: PostRecord | undefined;
     await mc().posts.refresh();
     await mc().posts.mutate((d) => {
@@ -148,13 +148,13 @@ export function directRoutes(ctx: AppContext): Router {
   r.delete('/direct/posts/:id', ah(async (req, res) => {
     await mc().posts.refresh();
     const rec = mc().posts.all().find((x) => x.id === req.params.id);
-    if (rec?.remoteId && rec.status !== 'failed' && rec.platform !== 'instagram' && req.query.remote === '1') {
+    if (rec?.remoteId && rec.status !== 'failed' && req.query.remote === '1') {
       // Apaga também na rede. Se a rede recusar, mantém o registro e mostra o motivo.
       if (rec.platform === 'youtube') {
         const token = await new YouTubeAdapter(ctx).token({ ctx, mc: mc() });
         const r2 = await ctx.fetch(`https://www.googleapis.com/youtube/v3/videos?id=${encodeURIComponent(rec.remoteId)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
         if (!r2.ok && r2.status !== 404) throw new AppError(502, `O YouTube recusou apagar o vídeo (${r2.status}): ${(await r2.text()).slice(0, 300)}`);
-      } else if (rec.platform === 'facebook') {
+      } else if (rec.platform === 'facebook' || rec.platform === 'instagram') {
         const page = selectedPage(ctx, mc());
         try {
           await graph(ctx, `/${rec.remoteId}`, { method: 'DELETE', token: page.token, what: rec.platform === 'facebook' ? 'Remoção do vídeo no Facebook' : 'Remoção do Reel no Instagram' });

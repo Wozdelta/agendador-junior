@@ -197,7 +197,7 @@ export function DirectPost() {
         const tag = `[${i + 1}/${rows.length}] ${row.name}`;
         const thumb = await makeThumb(row.coverUrl ?? row.videoUrl, !row.coverUrl);
         const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
-          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
+          directApi.savePost({ id: `${platform}-${row.key}`, platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
             .catch((e) => say(`Aviso: não salvei no histórico (${e.message}).`, 'error'));
 
         if (nets.youtube) {
