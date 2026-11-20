@@ -10,6 +10,7 @@ import { YouTubeAdapter } from '../platforms/youtube.js';
 import { getConn } from '../platforms/tokens.js';
 import { PLATFORMS, type Platform, type PostRecord } from '../shared/types.js';
 import { ah } from './middleware.js';
+import { MEDIA_BUCKET, storageUrl, supabase } from '../lib/supabase.js';
 
 const str = (v: unknown, max = 70_000) => (typeof v === 'string' ? v.slice(0, max) : undefined);
 
@@ -60,13 +61,34 @@ export function directRoutes(ctx: AppContext): Router {
   }));
 
   /** Instagram por envio direto: cria o Reel vazio e recebe o vídeo em pedaços (nada fica guardado). */
+  // Passagem temporária: o Instagram só aceita vídeo grande por link. O arquivo fica no
+  // Storage só enquanto o Instagram baixa e é apagado logo em seguida.
+  const tempPath = (v: unknown) => (typeof v === 'string' && /^ig-temp\/[\w-]+\.mp4$/.test(v) ? v : undefined);
+  const dropTemp = async (path?: string) => {
+    if (!path) return;
+    try { await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).remove([path]); } catch {}
+  };
+  r.post('/direct/instagram/stage', ah(async (_req, res) => {
+    const path = `ig-temp/${crypto.randomUUID()}.mp4`;
+    const { data, error } = await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).createSignedUploadUrl(path);
+    if (error || !data) throw new AppError(503, `Não deu para preparar o envio ao Instagram: ${error?.message ?? 'sem resposta'}`);
+    res.json({ path, uploadUrl: data.signedUrl });
+  }));
+  r.post('/direct/instagram/unstage', ah(async (req, res) => {
+    await dropTemp(tempPath(req.body?.path));
+    res.json({ ok: true });
+  }));
+
   r.post('/direct/instagram/create', ah(async (req, res) => {
     await mc().connections.refresh();
+    const staged = tempPath(req.body?.path);
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'A Página escolhida não tem Instagram profissional vinculado.');
     const c = await graph(ctx, `/${page.instagram.id}/media`, {
       method: 'POST', token: page.token, what: 'Criação do Reel',
-      params: { media_type: 'REELS', upload_type: 'resumable', caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
+      params: staged
+        ? { media_type: 'REELS', video_url: await storageUrl(ctx.config, staged, ctx.fetch, 3600), caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true }
+        : { media_type: 'REELS', upload_type: 'resumable', caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
     });
     res.json({ containerId: c.id });
   }));
@@ -95,6 +117,7 @@ export function directRoutes(ctx: AppContext): Router {
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'Instagram não vinculado.');
     const s = await graph(ctx, `/${containerId}`, { token: page.token, params: { fields: 'status_code,status' }, what: 'Status do Reel' });
+    if (s.status_code === 'FINISHED') await dropTemp(tempPath(req.body?.path));
     if (s.status_code === 'ERROR' || s.status_code === 'EXPIRED') return res.json({ state: 'failed', error: `O Instagram não processou o vídeo: ${s.status ?? s.status_code}` });
     if (s.status_code !== 'FINISHED') return res.json({ state: 'processing' });
     const pub = await graph(ctx, `/${page.instagram.id}/media_publish`, { method: 'POST', token: page.token, params: { creation_id: containerId }, mayCreate: true, what: 'Publicação do Reel' });
