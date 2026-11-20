@@ -6,7 +6,7 @@ React/Vite na Vercel, API Express em Vercel Functions, Supabase Auth e PostgreSQ
 
 Siga [supabase/README.md](supabase/README.md). Execute [supabase/setup.sql](supabase/setup.sql) no SQL Editor. Cadastre as variáveis de [.env.example](.env.example) na Vercel, sem prefixo `VITE_`.
 
-- Node.js: 24.x, como em `package.json` (o SDK Supabase requer Node 22+).
+- Node.js: 24 ou mais novo (a Vercel usa a versão do projeto, hoje 26.x) (o SDK Supabase requer Node 22+).
 - Root Directory: raiz do repositório (`.` / campo vazio), não `web`.
 - Preset: Vite. Install: `npm install`. Build: `npm run build:web`. Output: `web/dist`.
 - Preserve os rewrites de `vercel.json`. Não há cron.
