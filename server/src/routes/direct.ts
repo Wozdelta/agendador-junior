@@ -173,6 +173,7 @@ export function directRoutes(ctx: AppContext): Router {
     const rec = mc().posts.all().find((x) => x.id === req.params.id);
     let warning: string | undefined;
     if (rec?.remoteId && rec.status !== 'failed' && req.query.remote === '1') {
+      await mc().connections.refresh();
       // Apaga também na rede. Se a rede recusar, mantém o registro e mostra o motivo.
       if (rec.platform === 'youtube') {
         const token = await new YouTubeAdapter(ctx).token({ ctx, mc: mc() });
