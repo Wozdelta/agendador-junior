@@ -262,7 +262,13 @@ export function DirectPost() {
           }
         }
       }
-      say('Terminado. Confira o resumo de cada vídeo abaixo e a aba Histórico.', 'ok');
+      // Vídeo que deu certo em todas as redes sai do rascunho; os que falharam ficam para tentar de novo.
+      const okPhases = ['scheduled', 'published'];
+      setRows((x) => x.filter((r) => {
+        const ok = NETS.filter((n) => nets[n.id]).every((n) => okPhases.includes(r.state[n.id]?.phase ?? ''));
+        return !ok;
+      }));
+      say('Terminado. Os vídeos enviados com sucesso saíram do rascunho (veja na aba Histórico); os que falharam continuam aqui.', 'ok');
     } catch (e: any) {
       setError(e.message);
       say(`Parado: ${e.message}`, 'error');
