@@ -25,15 +25,21 @@ async function json<T>(method: string, url: string, body?: unknown): Promise<T> 
   return data as T;
 }
 
+let saveQueue: Promise<unknown> = Promise.resolve();
 export const directApi = {
   session: () => json<DirectSession>('POST', '/api/direct/session'),
   posts: () => json<PostRecord[]>('GET', '/api/direct/posts'),
-  savePost: (p: Partial<PostRecord> & Pick<PostRecord, 'platform' | 'status'>) => json<PostRecord>('POST', '/api/direct/posts', p),
-  deletePost: (id: string) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}`),
+  // Um de cada vez: o servidor regrava a lista inteira, e salvamentos simultâneos apagavam as outras redes.
+  savePost: (p: Partial<PostRecord> & Pick<PostRecord, 'platform' | 'status'>) => {
+    const run = saveQueue.then(() => json<PostRecord>('POST', '/api/direct/posts', p));
+    saveQueue = run.catch(() => undefined);
+    return run;
+  },
+  deletePost: (id: string, remote = false) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}${remote ? '?remote=1' : ''}`),
   igStart: (facebookVideoId: string, caption: string) =>
     json<{ state: 'waiting' | 'processing'; containerId?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
   igCheck: (containerId: string, deleteFacebookVideoId?: string) =>
-    json<{ state: 'processing' | 'published'; id?: string; url?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId }),
+    json<{ state: 'processing' | 'published' | 'failed'; id?: string; url?: string; error?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId }),
 };
 
 /** PUT/POST com progresso (fetch não informa progresso de envio). */
@@ -152,19 +158,25 @@ export async function uploadFacebook(
 
 // ---------------- Instagram (agora) ----------------
 export async function publishInstagram(facebookVideoId: string, caption: string, deleteCarrier: boolean, onStatus: (msg: string) => void) {
-  let containerId: string | undefined;
-  const deadline = Date.now() + 15 * 60_000;
-  while (!containerId) {
-    if (Date.now() > deadline) throw new Error('O Facebook demorou demais para processar o vídeo; o Instagram não foi publicado.');
-    const r = await directApi.igStart(facebookVideoId, caption);
-    if (r.containerId) containerId = r.containerId;
-    else { onStatus('Aguardando o Facebook processar o vídeo…'); await sleep(8000); }
+  const deadline = Date.now() + 20 * 60_000;
+  let lastError = '';
+  // O Instagram às vezes falha ao baixar o vídeo (ex.: 2207076); tenta de novo até 3 vezes.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let containerId: string | undefined;
+    while (!containerId) {
+      if (Date.now() > deadline) throw new Error(lastError || 'O Facebook demorou demais para processar o vídeo; o Instagram não foi publicado.');
+      const r = await directApi.igStart(facebookVideoId, caption);
+      if (r.containerId) containerId = r.containerId;
+      else { onStatus('Aguardando o Facebook terminar de processar o vídeo…'); await sleep(8000); }
+    }
+    for (;;) {
+      if (Date.now() > deadline) throw new Error(lastError || 'O Instagram demorou demais para processar o vídeo.');
+      onStatus(attempt > 1 ? `Instagram processando o Reel (tentativa ${attempt} de 3)…` : 'Instagram processando o Reel…');
+      await sleep(6000);
+      const r = await directApi.igCheck(containerId, deleteCarrier ? facebookVideoId : undefined);
+      if (r.state === 'published') return r;
+      if (r.state === 'failed') { lastError = r.error || 'O Instagram não processou o vídeo.'; onStatus(`${lastError} — tentando de novo…`); await sleep(15000); break; }
+    }
   }
-  for (;;) {
-    if (Date.now() > deadline) throw new Error('O Instagram demorou demais para processar o vídeo.');
-    onStatus('Instagram processando o Reel…');
-    await sleep(6000);
-    const r = await directApi.igCheck(containerId, deleteCarrier ? facebookVideoId : undefined);
-    if (r.state === 'published') return r;
-  }
+  throw new Error(lastError);
 }

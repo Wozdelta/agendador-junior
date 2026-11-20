@@ -53,7 +53,7 @@ export function PostHistory() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>('all');
   const [now, setNow] = useState(Date.now());
-  const load = () => { setError(null); return directApi.posts().then((p) => { setPosts(p); setNow(Date.now()); }).catch((e) => setError(e.message)); };
+  const load = () => { return directApi.posts().then((p) => { setPosts(p); setNow(Date.now()); }).catch((e) => setError(e.message)); };
   useEffect(() => { void load(); const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
 
   const groups = useMemo(() => {
@@ -111,13 +111,16 @@ export function PostHistory() {
   }
 
   const removeVideo = async (g: VideoGroup) => {
-    if (!confirm(`Apagar "${g.title}" do histórico (${g.posts.map((p) => NET_LABEL[p.platform]).join(', ')})?\n\nIsso NÃO apaga o vídeo das redes.`)) return;
-    for (const p of g.posts) await directApi.deletePost(p.id).catch((e) => setError(e.message));
+    if (!confirm(`Apagar "${g.title}" de TODAS as redes (${g.posts.map((p) => NET_LABEL[p.platform]).join(', ')}) e do histórico?\n\nNão dá para desfazer.`)) return;
+    const errs: string[] = [];
+    for (const p of g.posts) await directApi.deletePost(p.id, true).catch((e) => errs.push(`${NET_LABEL[p.platform]}: ${e.message}`));
+    setError(errs.length ? errs.join(' · ') : null);
     void load();
   };
   const remove = async (p: PostRecord) => {
-    if (!confirm(`Apagar o registro de ${NET_LABEL[p.platform]} do histórico?\n\nIsso NÃO apaga o vídeo da rede.`)) return;
-    await directApi.deletePost(p.id).catch((e) => setError(e.message));
+    if (!confirm(`Apagar este vídeo do ${NET_LABEL[p.platform]} e do histórico?\n\nNão dá para desfazer.`)) return;
+    const err = await directApi.deletePost(p.id, true).then(() => null, (e) => e.message as string);
+    setError(err ? `${NET_LABEL[p.platform]}: ${err}` : null);
     void load();
   };
 
@@ -129,7 +132,7 @@ export function PostHistory() {
           <h1>O que eu postei<span className="accent-dot">.</span></h1>
           <p>Cada vídeo, em quais redes, quando vai ao ar e o link.</p>
         </div>
-        <button onClick={() => void load()}><Icon name="clock" size={15} />Atualizar</button>
+        <button onClick={() => { setError(null); void load(); }}><Icon name="clock" size={15} />Atualizar</button>
       </div>
 
       <div className="history-stats">
@@ -182,7 +185,7 @@ export function PostHistory() {
                         <em>{relative(g.when, now)}</em>
                       </span>
                     )}
-                    <button className="history-delete" onClick={() => void removeVideo(g)} title="Apagar este vídeo do histórico">
+                    <button className="history-delete" onClick={() => void removeVideo(g)} title="Apagar este vídeo de todas as redes">
                       <Icon name="trash" size={14} />Apagar
                     </button>
                   </span>
@@ -196,7 +199,7 @@ export function PostHistory() {
                         <span className="net-name">{NET_LABEL[p.platform]}</span>
                         <span className={`history-pill ${st.cls}`}>{st.label}</span>
                         {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="net-link">Abrir ↗</a>}
-                        <button className="net-remove" title={`Apagar só o ${NET_LABEL[p.platform]} do histórico`} aria-label={`Apagar registro de ${NET_LABEL[p.platform]}`} onClick={() => void remove(p)}><Icon name="trash" size={13} /></button>
+                        <button className="net-remove" title={`Apagar do ${NET_LABEL[p.platform]}`} aria-label={`Apagar registro de ${NET_LABEL[p.platform]}`} onClick={() => void remove(p)}><Icon name="trash" size={13} /></button>
                         {p.error && <span className="net-error">{p.error}</span>}
                       </li>
                     );

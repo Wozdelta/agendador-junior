@@ -46,11 +46,10 @@ export function directRoutes(ctx: AppContext): Router {
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'A Página escolhida não tem Instagram profissional vinculado.');
     const v = await graph(ctx, `/${fbVideoId}`, { token: page.token, params: { fields: 'source,status' }, what: 'Link do vídeo no Facebook' });
-    if (!v.source) {
-      const st = v.status?.video_status;
-      if (st === 'error') throw new AppError(422, 'O Facebook não conseguiu processar o vídeo; o Instagram não pôde ser publicado.');
-      return res.json({ state: 'waiting' });
-    }
+    const st = v.status?.video_status;
+    if (st === 'error') throw new AppError(422, 'O Facebook não conseguiu processar o vídeo; o Instagram não pôde ser publicado.');
+    // Só usa o link quando o Facebook terminou de processar; antes disso o arquivo pode estar incompleto (erro 2207076).
+    if (!v.source || st !== 'ready') return res.json({ state: 'waiting' });
     const c = await graph(ctx, `/${page.instagram.id}/media`, {
       method: 'POST', token: page.token, what: 'Criação do Reel',
       params: { media_type: 'REELS', video_url: v.source, caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
@@ -65,7 +64,7 @@ export function directRoutes(ctx: AppContext): Router {
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'Instagram não vinculado.');
     const s = await graph(ctx, `/${containerId}`, { token: page.token, params: { fields: 'status_code,status' }, what: 'Status do Reel' });
-    if (s.status_code === 'ERROR' || s.status_code === 'EXPIRED') throw new AppError(422, `O Instagram não processou o vídeo: ${s.status ?? s.status_code}`);
+    if (s.status_code === 'ERROR' || s.status_code === 'EXPIRED') return res.json({ state: 'failed', error: `O Instagram não processou o vídeo: ${s.status ?? s.status_code}` });
     if (s.status_code !== 'FINISHED') return res.json({ state: 'processing' });
     const pub = await graph(ctx, `/${page.instagram.id}/media_publish`, { method: 'POST', token: page.token, params: { creation_id: containerId }, mayCreate: true, what: 'Publicação do Reel' });
     let url: string | undefined;
@@ -117,6 +116,22 @@ export function directRoutes(ctx: AppContext): Router {
 
   r.delete('/direct/posts/:id', ah(async (req, res) => {
     await mc().posts.refresh();
+    const rec = mc().posts.all().find((x) => x.id === req.params.id);
+    if (rec?.remoteId && req.query.remote === '1') {
+      // Apaga também na rede. Se a rede recusar, mantém o registro e mostra o motivo.
+      if (rec.platform === 'youtube') {
+        const token = await new YouTubeAdapter(ctx).token({ ctx, mc: mc() });
+        const r2 = await ctx.fetch(`https://www.googleapis.com/youtube/v3/videos?id=${encodeURIComponent(rec.remoteId)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
+        if (!r2.ok && r2.status !== 404) throw new AppError(502, `O YouTube recusou apagar o vídeo (${r2.status}): ${(await r2.text()).slice(0, 300)}`);
+      } else if (rec.platform === 'facebook' || rec.platform === 'instagram') {
+        const page = selectedPage(ctx, mc());
+        try {
+          await graph(ctx, `/${rec.remoteId}`, { method: 'DELETE', token: page.token, what: rec.platform === 'facebook' ? 'Remoção do vídeo no Facebook' : 'Remoção do Reel no Instagram' });
+        } catch (e: any) {
+          if (!/does not exist|cannot be loaded/i.test(e.message)) throw new AppError(502, `${rec.platform === 'facebook' ? 'O Facebook' : 'O Instagram'} recusou apagar: ${e.message}`);
+        }
+      }
+    }
     await mc().posts.mutate((d) => { const i = d.findIndex((x) => x.id === req.params.id); if (i >= 0) d.splice(i, 1); });
     res.json({ ok: true });
   }));
