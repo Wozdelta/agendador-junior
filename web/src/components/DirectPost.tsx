@@ -10,7 +10,7 @@ type Net = 'youtube' | 'facebook' | 'instagram';
 const NETS: Array<{ id: Net; label: string; kind: string }> = [
   { id: 'youtube', label: 'YouTube', kind: 'agendado na data' },
   { id: 'facebook', label: 'Facebook', kind: 'agendado na data' },
-  { id: 'instagram', label: 'Instagram', kind: 'publica na hora do envio' },
+  { id: 'instagram', label: 'Instagram', kind: 'agendado na data (o servidor publica)' },
 ];
 const NET_LABEL: Record<Platform, string> = { youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok' };
 
@@ -249,12 +249,14 @@ export function DirectPost() {
             say(`${tag} → Instagram: enviando o vídeo (${mb(row.video.size)}).`);
             setNet(row.key, 'instagram', { phase: 'sending', step: 'Iniciando…', error: undefined });
             await record('instagram', 'sending', { title: row.texts.instagram.description.split('\n')[0] });
+            const later = when.getTime() > Date.now() + 5 * 60_000;
             const r = await uploadInstagram(row.video, row.texts.instagram.description,
-              (sent) => setNet(row.key, 'instagram', { sent }), (step) => setNet(row.key, 'instagram', { step }));
-            await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
+              (sent) => setNet(row.key, 'instagram', { sent }), (step) => setNet(row.key, 'instagram', { step }),
+              later ? { id: recId('instagram'), publishAt: when } : undefined);
+            if (!r.scheduled) await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
             done.push('instagram');
-            setNet(row.key, 'instagram', { phase: 'published', step: undefined, url: r.url });
-            say(`${tag} → Instagram: publicado agora.`, 'ok');
+            setNet(row.key, 'instagram', { phase: r.scheduled ? 'scheduled' : 'published', step: undefined, url: r.url });
+            say(`${tag} → Instagram: ${r.scheduled ? `agendado para ${fmtDate(when)} (o servidor publica na hora)` : 'publicado agora'}.`, 'ok');
           }
         } catch (e: any) {
           const failed = current!;

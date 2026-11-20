@@ -29,7 +29,7 @@ interface VideoGroup {
 
 /** Agendado com data passada já foi ao ar. */
 const effective = (p: PostRecord, now: number): PostRecord['status'] =>
-  p.status === 'scheduled' && p.publishAt && Date.parse(p.publishAt) <= now ? 'published' : p.status;
+  p.status === 'scheduled' && !p.igJob && p.publishAt && Date.parse(p.publishAt) <= now ? 'published' : p.status;
 
 function relative(d: Date, now: number) {
   const diff = d.getTime() - now;

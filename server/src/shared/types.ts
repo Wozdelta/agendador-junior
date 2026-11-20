@@ -228,6 +228,8 @@ export interface PostRecord {
   remoteId?: string;
   url?: string;
   error?: string;
+  /** Instagram agendado: partes do vídeo na pasta temporária até o servidor publicar na hora certa. */
+  igJob?: { paths: string[]; sizes: number[]; caption: string; containerId?: string; tries?: number };
   createdAt: string;
   updatedAt: string;
 }

@@ -63,11 +63,7 @@ export function directRoutes(ctx: AppContext): Router {
   /** Instagram por envio direto: cria o Reel vazio e recebe o vídeo em pedaços (nada fica guardado). */
   // Passagem temporária: o Instagram só aceita vídeo grande por link. O arquivo fica no
   // Storage só enquanto o Instagram baixa e é apagado logo em seguida.
-  const tempPath = (v: unknown) => (typeof v === 'string' && /^ig-temp\/[\w-]+\.mp4$/.test(v) ? v : undefined);
-  const dropTemp = async (path?: string) => {
-    if (!path) return;
-    try { await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).remove([path]); } catch {}
-  };
+  const dropTemp = (path?: string) => dropTempFile(ctx, path);
   // O vídeo chega em partes de até 45 MB (limite do Storage); o servidor junta e manda inteiro ao Instagram.
   r.post('/direct/instagram/stage', ah(async (req, res) => {
     const n = Math.min(20, Math.max(1, Number(req.body?.parts) || 1));
@@ -82,7 +78,6 @@ export function directRoutes(ctx: AppContext): Router {
     }
     res.json({ path: parts[0].path, uploadUrl: parts[0].uploadUrl, parts });
   }));
-  const tempPaths = (v: unknown) => (Array.isArray(v) ? v.map(tempPath).filter((x): x is string => !!x).slice(0, 20) : []);
   r.post('/direct/instagram/unstage', ah(async (req, res) => {
     for (const p of [tempPath(req.body?.path), ...tempPaths(req.body?.paths)]) await dropTemp(p);
     res.json({ ok: true });
@@ -93,15 +88,7 @@ export function directRoutes(ctx: AppContext): Router {
     const staged = tempPath(req.body?.path);
     const many = tempPaths(req.body?.paths);
     const sizes = Array.isArray(req.body?.sizes) ? req.body.sizes.map(Number) : [];
-    let videoUrl: string | undefined;
-    if (many.length > 1) {
-      if (sizes.length !== many.length || sizes.some((n: number) => !Number.isFinite(n) || n <= 0)) throw new AppError(400, 'Tamanhos das partes inválidos.');
-      const m = /^ig-temp\/([\w-]+)-0\.mp4$/.exec(many[0]);
-      if (!m) throw new AppError(400, 'Partes do vídeo inválidas.');
-      videoUrl = igMediaUrl(ctx, m[1], sizes);
-    } else if (many.length === 1 || staged) {
-      videoUrl = await storageUrl(ctx.config, many[0] ?? staged!, ctx.fetch, 3600);
-    }
+    const videoUrl = many.length || staged ? await videoUrlFor(ctx, many.length ? many : [staged!], sizes) : undefined;
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'A Página escolhida não tem Instagram profissional vinculado.');
     const c = await graph(ctx, `/${page.instagram.id}/media`, {
@@ -128,6 +115,24 @@ export function directRoutes(ctx: AppContext): Router {
     // 206 = pedaço recebido, faltam outros; 200 = arquivo completo.
     if (up.status !== 200 && up.status !== 206) throw new AppError(502, `O Instagram recusou o envio do vídeo (${up.status}): ${txt.slice(0, 300)}`);
     res.json({ ok: true, done: up.status === 200 });
+  }));
+
+  /** Instagram agendado: guarda as partes; o servidor publica na hora (rotina a cada 5 min). */
+  r.post('/direct/instagram/schedule', ah(async (req, res) => {
+    const id = str(req.body?.id, 300);
+    const paths = tempPaths(req.body?.paths);
+    const sizes = Array.isArray(req.body?.sizes) ? req.body.sizes.map(Number) : [];
+    const publishAt = str(req.body?.publishAt, 40);
+    if (!id || !paths.length || sizes.length !== paths.length || !publishAt || Number.isNaN(Date.parse(publishAt))) throw new AppError(400, 'Agendamento do Instagram inválido.');
+    await mc().posts.refresh();
+    let saved: PostRecord | undefined;
+    await mc().posts.mutate((d) => {
+      const rec = d.find((x) => x.id === id);
+      if (!rec) throw new AppError(404, 'Registro do Instagram não encontrado.');
+      Object.assign(rec, { status: 'scheduled', publishAt, error: undefined, updatedAt: ctx.clock.now().toISOString(), igJob: { paths, sizes, caption: str(req.body?.caption, 2200) ?? '' } });
+      saved = rec;
+    });
+    res.json(saved);
   }));
 
   r.post('/direct/instagram/check', ah(async (req, res) => {
@@ -179,6 +184,7 @@ export function directRoutes(ctx: AppContext): Router {
         remoteId: str(b.remoteId, 120) ?? prev?.remoteId,
         url: str(b.url, 500) ?? prev?.url,
         error: b.status === 'failed' ? str(b.error, 1000) : undefined,
+        igJob: prev?.igJob,
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
       };
@@ -192,6 +198,7 @@ export function directRoutes(ctx: AppContext): Router {
     await mc().posts.refresh();
     const rec = mc().posts.all().find((x) => x.id === req.params.id);
     let warning: string | undefined;
+    if (rec?.igJob) for (const p of rec.igJob.paths) await dropTemp(p);
     if (rec?.remoteId && rec.status !== 'failed' && req.query.remote === '1') {
       await mc().connections.refresh();
       // Apaga também na rede. Se a rede recusar, mantém o registro e mostra o motivo.
@@ -270,4 +277,74 @@ export function directPublicRoutes(ctx: AppContext): Router {
     res.end();
   }));
   return r;
+}
+
+// ---------- helpers de módulo ----------
+const tempPath = (v: unknown) => (typeof v === 'string' && /^ig-temp\/[\w-]+\.mp4$/.test(v) ? v : undefined);
+const tempPaths = (v: unknown) => (Array.isArray(v) ? v.map(tempPath).filter((x): x is string => !!x).slice(0, 20) : []);
+async function dropTempFile(ctx: AppContext, path?: string) {
+  if (!path) return;
+  try { await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).remove([path]); } catch {}
+}
+/** Link que o Instagram baixa: direto do Storage (1 parte) ou o nosso link que junta as partes. */
+async function videoUrlFor(ctx: AppContext, paths: string[], sizes: number[]) {
+  if (paths.length === 1) return storageUrl(ctx.config, paths[0], ctx.fetch, 3600);
+  if (sizes.length !== paths.length || sizes.some((n) => !Number.isFinite(n) || n <= 0)) throw new AppError(400, 'Tamanhos das partes inválidos.');
+  const m = /^ig-temp\/([\w-]+)-0\.mp4$/.exec(paths[0]);
+  if (!m) throw new AppError(400, 'Partes do vídeo inválidas.');
+  return igMediaUrl(ctx, m[1], sizes);
+}
+
+/**
+ * Rotina (a cada 5 min): Instagram agendado. ~15 min antes cria o Reel (o Instagram baixa o vídeo);
+ * na hora marcada publica e apaga as partes. Falhou 3 vezes → marca como falha.
+ */
+export async function processInstagramSchedule(ctx: AppContext) {
+  const mc = ctx.modes.real;
+  await mc.posts.refresh();
+  const now = Date.now();
+  const due = mc.posts.all().filter((p) => p.platform === 'instagram' && p.status === 'scheduled' && p.igJob && p.publishAt && Date.parse(p.publishAt) - now < 15 * 60_000);
+  const out: string[] = [];
+  if (!due.length) return out;
+  await mc.connections.refresh();
+  const page = selectedPage(ctx, mc);
+  if (!page.instagram) throw new AppError(409, 'Instagram não vinculado.');
+  const save = (id: string, patch: Partial<PostRecord>) => mc.posts.mutate((d) => {
+    const r = d.find((x) => x.id === id);
+    if (r) Object.assign(r, patch, { updatedAt: new Date().toISOString() });
+  });
+  for (const p of due) {
+    const job = p.igJob!;
+    try {
+      if (!job.containerId) {
+        const c = await graph(ctx, `/${page.instagram.id}/media`, {
+          method: 'POST', token: page.token, what: 'Criação do Reel',
+          params: { media_type: 'REELS', video_url: await videoUrlFor(ctx, job.paths, job.sizes), caption: job.caption, share_to_feed: true },
+        });
+        await save(p.id, { igJob: { ...job, containerId: c.id } });
+        out.push(`${p.id}: Reel criado`);
+        continue;
+      }
+      const st = await graph(ctx, `/${job.containerId}`, { token: page.token, params: { fields: 'status_code,status' }, what: 'Status do Reel' });
+      if (st.status_code === 'ERROR' || st.status_code === 'EXPIRED') {
+        const tries = (job.tries ?? 0) + 1;
+        if (tries >= 3) {
+          for (const x of job.paths) await dropTempFile(ctx, x);
+          await save(p.id, { status: 'failed', error: `O Instagram não processou o vídeo: ${st.status ?? st.status_code}`, igJob: undefined });
+        } else await save(p.id, { igJob: { ...job, containerId: undefined, tries } });
+        out.push(`${p.id}: erro ${st.status_code} (tentativa ${tries})`);
+        continue;
+      }
+      if (st.status_code !== 'FINISHED' || Date.parse(p.publishAt!) > Date.now()) { out.push(`${p.id}: aguardando`); continue; }
+      const pub = await graph(ctx, `/${page.instagram.id}/media_publish`, { method: 'POST', token: page.token, params: { creation_id: job.containerId }, mayCreate: true, what: 'Publicação do Reel' });
+      let url: string | undefined;
+      try { url = (await graph(ctx, `/${pub.id}`, { token: page.token, params: { fields: 'permalink' }, what: 'Link do Reel' })).permalink; } catch {}
+      for (const x of job.paths) await dropTempFile(ctx, x);
+      await save(p.id, { status: 'published', remoteId: pub.id, url, publishAt: new Date().toISOString(), igJob: undefined, error: undefined });
+      out.push(`${p.id}: publicado`);
+    } catch (e: any) {
+      out.push(`${p.id}: ${e.message}`);
+    }
+  }
+  return out;
 }

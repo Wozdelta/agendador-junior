@@ -41,6 +41,7 @@ export const directApi = {
   igCreate: (caption: string, path?: string) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption, path }),
   igStage: (parts: number) => json<{ parts: Array<{ path: string; uploadUrl: string }> }>('POST', '/api/direct/instagram/stage', { parts }),
   igUnstage: (paths: string[]) => json<{ ok: true }>('POST', '/api/direct/instagram/unstage', { paths }),
+  igSchedule: (b: { id: string; paths: string[]; sizes: number[]; caption: string; publishAt: string }) => json<PostRecord>('POST', '/api/direct/instagram/schedule', b),
   igCreateParts: (caption: string, paths: string[], sizes: number[]) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption, paths, sizes }),
   igCheck: (containerId: string, deleteFacebookVideoId?: string, path?: string) =>
     json<{ state: 'processing' | 'published' | 'failed'; id?: string; url?: string; error?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId, path }),
@@ -171,13 +172,15 @@ export async function uploadFacebook(
  * máximo 50 MB por arquivo). O Instagram baixa por um link nosso que junta as partes.
  * As partes são apagadas no fim, dando certo ou não.
  */
-export async function uploadInstagram(video: File, caption: string, onProgress: Progress, onStatus: (msg: string) => void) {
+export async function uploadInstagram(video: File, caption: string, onProgress: Progress, onStatus: (msg: string) => void,
+  schedule?: { id: string; publishAt: Date }): Promise<{ id?: string; url?: string; scheduled?: boolean }> {
   const PART = 45 * 1024 * 1024;
   const count = Math.max(1, Math.ceil(video.size / PART));
   onStatus('Preparando envio ao Instagram…');
   const { parts } = await directApi.igStage(count);
   const paths = parts.map((p) => p.path);
   const sizes = parts.map((_, i) => Math.min(PART, video.size - i * PART));
+  let keep = false;
   try {
     for (let i = 0; i < parts.length; i++) {
       const start = i * PART;
@@ -197,6 +200,12 @@ export async function uploadInstagram(video: File, caption: string, onProgress: 
       if (up.status === 0 || up.status >= 300) throw new Error(`Envio ao Instagram falhou${label} (${up.status}): ${up.json?.message ?? up.json?.error ?? 'sem detalhe'}`);
     }
     onProgress(video.size);
+    if (schedule) {
+      // O servidor publica na hora marcada; as partes ficam guardadas até lá.
+      await directApi.igSchedule({ id: schedule.id, paths, sizes, caption, publishAt: schedule.publishAt.toISOString() });
+      keep = true;
+      return { scheduled: true };
+    }
     let lastError = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const tries = attempt > 1 ? ` (tentativa ${attempt} de 3)` : '';
@@ -215,7 +224,7 @@ export async function uploadInstagram(video: File, caption: string, onProgress: 
     }
     throw new Error(lastError);
   } finally {
-    await directApi.igUnstage(paths).catch(() => undefined);
+    if (!keep) await directApi.igUnstage(paths).catch(() => undefined);
   }
 }
 
