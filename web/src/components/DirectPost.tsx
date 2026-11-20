@@ -4,6 +4,7 @@ import { RULES } from '../../../server/src/shared/limits';
 import { buildGroups, filesFromDrop, filesFromInput, type ImportGroup } from '../lib/folder-import';
 import { directApi, publishInstagram, uploadFacebook, uploadYouTube } from '../lib/direct-upload';
 import { Icon } from './ui/Icon';
+import '../post.css';
 
 type Net = 'youtube' | 'facebook' | 'instagram';
 const NETS: Array<{ id: Net; label: string; kind: string }> = [
@@ -30,6 +31,24 @@ interface LogLine { at: Date; text: string; level: 'info' | 'ok' | 'error' }
 
 const fileKey = (f: File) => `${f.name}|${f.size}`;
 const norm = (t?: string) => (t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase();
+
+/** Miniatura 9:16 pequena da capa (ou de um quadro do vídeo) para o histórico. */
+async function makeThumb(src: string, isVideo: boolean): Promise<string | undefined> {
+  try {
+    const el: HTMLImageElement | HTMLVideoElement = isVideo ? document.createElement('video') : new Image();
+    await new Promise<void>((ok, fail) => {
+      if (el instanceof HTMLVideoElement) { el.muted = true; el.preload = 'auto'; el.onloadeddata = () => { el.currentTime = Math.min(1, el.duration / 2); }; el.onseeked = () => ok(); }
+      else el.onload = () => ok();
+      el.onerror = () => fail(new Error('thumb'));
+      el.src = src;
+    });
+    const w = el instanceof HTMLVideoElement ? el.videoWidth : el.naturalWidth, h = el instanceof HTMLVideoElement ? el.videoHeight : el.naturalHeight;
+    const c = document.createElement('canvas'); c.width = 108; c.height = 192;
+    const scale = Math.max(c.width / w, c.height / h);
+    c.getContext('2d')!.drawImage(el, (c.width - w * scale) / 2, (c.height - h * scale) / 2, w * scale, h * scale);
+    return c.toDataURL('image/jpeg', 0.7);
+  } catch { return undefined; }
+}
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const localInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -176,8 +195,9 @@ export function DirectPost() {
         const row = rows[i];
         const when = dateFor(i);
         const tag = `[${i + 1}/${rows.length}] ${row.name}`;
+        const thumb = await makeThumb(row.coverUrl ?? row.videoUrl, !row.coverUrl);
         const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
-          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, fileKey: fileKey(row.video), publishAt: when.toISOString(), ...extra })
+          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
             .catch((e) => say(`Aviso: não salvei no histórico (${e.message}).`, 'error'));
 
         if (nets.youtube) {
@@ -291,15 +311,32 @@ export function DirectPost() {
             <span className="platform-name">TikTok<small>em manutenção</small></span>
           </label>
         </div>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12 }}>
-          <label>Primeiro vídeo em<br /><input type="datetime-local" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} /></label>
-          <label>Um vídeo a cada<br /><input type="number" min={0} max={30} value={everyDays} disabled={busy} onChange={(e) => setEveryDays(Math.max(0, Number(e.target.value) || 0))} style={{ width: 70 }} /> dia(s)</label>
+        <h3 className="post-subhead">Quando</h3>
+        <div className="post-schedule">
+          <label className="post-field">
+            <span><Icon name="calendar" size={15} />Primeiro vídeo vai ao ar</span>
+            <input type="datetime-local" value={start} disabled={busy} onChange={(e) => setStart(e.target.value)} />
+          </label>
+          <div className="post-field">
+            <span><Icon name="clock" size={15} />Intervalo entre vídeos</span>
+            <div className="post-stepper">
+              <button type="button" disabled={busy || everyDays <= 0} onClick={() => setEveryDays(everyDays - 1)} aria-label="Menos um dia">−</button>
+              <strong>{everyDays === 0 ? 'mesmo dia' : everyDays === 1 ? '1 dia' : `${everyDays} dias`}</strong>
+              <button type="button" disabled={busy || everyDays >= 30} onClick={() => setEveryDays(everyDays + 1)} aria-label="Mais um dia">+</button>
+            </div>
+          </div>
+          <div className="post-timeline" aria-label="Datas dos vídeos">
+            {(rows.length ? rows : [null, null, null]).slice(0, 4).map((r, i) => (
+              <span key={i} className={r ? '' : 'ghost'}><b>{i + 1}</b>{fmtDate(dateFor(i))}</span>
+            ))}
+            {rows.length > 4 && <span className="more">+{rows.length - 4}</span>}
+          </div>
         </div>
       </section>
 
       {!busy && (
         <section
-          className={drag ? 'dropzone over' : 'dropzone'}
+          className={drag ? 'dropzone post-drop over' : 'dropzone post-drop'}
           onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
           onDragLeave={() => setDrag(false)}
           onDrop={(e) => {
@@ -308,12 +345,16 @@ export function DirectPost() {
             void filesFromDrop(e.dataTransfer).then(buildGroups).then(add).catch((err) => setError(err.message));
           }}
         >
+          <span className="post-drop-icon"><Icon name="folder" size={28} /></span>
           <p>
-            <strong>Arraste vídeos ou pastas aqui</strong><br />
-            <span className="muted">Em cada pasta: o vídeo, a imagem JPG (capa) e o .txt (títulos e descrições). Tudo é preenchido sozinho — confira antes de postar.</span>
+            <strong>{rows.length ? 'Arraste mais vídeos ou pastas' : 'Arraste vídeos ou pastas aqui'}</strong>
+            <span className="muted">Em cada pasta: o vídeo, a capa JPG e o .txt. Títulos, descrições e capa são preenchidos sozinhos.</span>
           </p>
+          <div className="post-drop-chips"><span><Icon name="video" size={13} />MP4 / MOV</span><span><Icon name="spark" size={13} />capa JPG</span><span><Icon name="copy" size={13} />divulgacao.txt</span></div>
+          <div className="post-drop-actions">
           <button className="primary" onClick={() => fileInput.current?.click()}><Icon name="plus" size={17} />Selecionar vídeos</button>
-          <button onClick={() => folderInput.current?.click()}><Icon name="plus" size={17} />Selecionar pasta</button>
+          <button onClick={() => folderInput.current?.click()}><Icon name="folder" size={17} />Selecionar pasta</button>
+          </div>
           <input ref={fileInput} type="file" multiple hidden accept="video/mp4,video/quicktime,.mp4,.mov,.jpg,.jpeg,.txt"
             onChange={(e) => { if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(add); e.target.value = ''; }} />
           <input ref={folderInput} type="file" multiple hidden {...({ webkitdirectory: '', directory: '' } as any)}
@@ -322,10 +363,10 @@ export function DirectPost() {
       )}
 
       {(busy || finished) && (
-        <section className="panel" aria-live="polite">
+        <section className="panel post-progress" aria-live="polite">
           <h3>{busy ? 'Enviando… não feche esta aba' : 'Resultado do envio'}</h3>
-          <progress max={100} value={pct} style={{ width: '100%', height: 14 }} />
-          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 6 }}>
+          <div className="post-bar"><i style={{ width: `${pct}%` }} /></div>
+          <div className="post-progress-stats">
             <span><strong>{pct}%</strong> · {mb(sentBytes)} de {mb(totalBytes)}</span>
             {busy && <span>Velocidade: <strong>{speed ? `${mb(speed)}/s` : 'medindo…'}</strong></span>}
             {busy && <span>Falta: <strong>{fmtTime(eta)}</strong></span>}
@@ -483,50 +524,5 @@ function DirectCard(props: {
         </div>
       </div>
     </article>
-  );
-}
-
-const STATUS_LABEL: Record<PostRecord['status'], string> = {
-  sending: 'Interrompido', scheduled: 'Agendado', published: 'Publicado', failed: 'Falhou',
-};
-
-export function PostHistory() {
-  const [posts, setPosts] = useState<PostRecord[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = () => directApi.posts().then(setPosts).catch((e) => setError(e.message));
-  useEffect(() => { void load(); }, []);
-  const groups = new Map<string, PostRecord[]>();
-  for (const p of posts ?? []) groups.set(p.video, [...(groups.get(p.video) ?? []), p]);
-  return (
-    <div>
-      <div className="page-heading">
-        <div>
-          <span className="eyebrow">HISTÓRICO</span>
-          <h1>O que eu postei<span className="accent-dot">.</span></h1>
-          <p>Cada vídeo, em quais redes, quando vai ao ar e o link.</p>
-        </div>
-        <button onClick={() => void load()}>Atualizar</button>
-      </div>
-      {error && <div className="alert error">{error}</div>}
-      {posts && !posts.length && <p className="muted">Nenhum envio ainda. Use "Postar".</p>}
-      {[...groups.entries()].map(([video, list]) => (
-        <section className="panel" key={video}>
-          <h3>{video}</h3>
-          <table style={{ width: '100%' }}>
-            <tbody>
-              {list.map((p) => (
-                <tr key={p.id}>
-                  <td><strong>{NET_LABEL[p.platform]}</strong></td>
-                  <td>{STATUS_LABEL[p.status]}{p.error ? ` — ${p.error}` : ''}</td>
-                  <td>{p.publishAt ? fmtDate(new Date(p.publishAt)) : ''}</td>
-                  <td>{p.url ? <a href={p.url} target="_blank" rel="noreferrer">abrir</a> : ''}</td>
-                  <td><button className="link" onClick={() => { if (confirm('Apagar este registro do histórico? (não apaga da rede)')) void directApi.deletePost(p.id).then(load); }}>apagar</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ))}
-    </div>
   );
 }

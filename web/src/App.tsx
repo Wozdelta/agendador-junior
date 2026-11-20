@@ -14,7 +14,8 @@ import { LiquidNav } from './components/LiquidNav';
 import { BrandMark, Icon } from './components/ui/Icon';
 import { GlassEffects } from './components/ui/GlassEffects';
 import { MotionPreview } from './components/MotionPreview';
-import { DirectPost, PostHistory } from './components/DirectPost';
+import { DirectPost } from './components/DirectPost';
+import { PostHistory } from './components/PostHistory';
 
 type Route = 'novo' | 'agenda' | 'conexoes' | 'config' | 'motion' | 'dashboard';
 const ROUTES: Array<{ id: Route; label: string }> = [

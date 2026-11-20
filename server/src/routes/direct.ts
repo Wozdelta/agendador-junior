@@ -99,6 +99,7 @@ export function directRoutes(ctx: AppContext): Router {
         id, platform,
         video: str(b.video, 300) ?? prev?.video ?? 'vídeo',
         fileKey: str(b.fileKey, 400) ?? prev?.fileKey,
+        thumb: (typeof b.thumb === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(b.thumb) && b.thumb.length < 40_000 ? b.thumb : undefined) ?? prev?.thumb,
         title: str(b.title, 300) ?? prev?.title,
         status: b.status,
         publishAt: str(b.publishAt, 40) ?? prev?.publishAt,

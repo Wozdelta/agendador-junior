@@ -218,6 +218,8 @@ export interface PostRecord {
   video: string;
   /** Identificação do arquivo (nome|tamanho) para avisar de vídeo repetido. */
   fileKey?: string;
+  /** Miniatura pequena da capa (data:image/jpeg). */
+  thumb?: string;
   platform: Platform;
   title?: string;
   status: 'sending' | 'scheduled' | 'published' | 'failed';
