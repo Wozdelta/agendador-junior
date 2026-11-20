@@ -49,7 +49,9 @@ export function directRoutes(ctx: AppContext): Router {
     const st = v.status?.video_status;
     if (st === 'error') throw new AppError(422, 'O Facebook não conseguiu processar o vídeo; o Instagram não pôde ser publicado.');
     // Só usa o link quando o Facebook terminou de processar; antes disso o arquivo pode estar incompleto (erro 2207076).
-    if (!v.source || st !== 'ready') return res.json({ state: 'waiting' });
+    // Vídeo agendado não fica "ready" até ir ao ar; basta o processamento ter terminado.
+    const processed = st === 'ready' || v.status?.processing_phase?.status === 'complete';
+    if (!v.source || !processed) return res.json({ state: 'waiting', fbStatus: `${st ?? '?'} / processamento: ${v.status?.processing_phase?.status ?? '?'}` });
     const c = await graph(ctx, `/${page.instagram.id}/media`, {
       method: 'POST', token: page.token, what: 'Criação do Reel',
       params: { media_type: 'REELS', video_url: v.source, caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },

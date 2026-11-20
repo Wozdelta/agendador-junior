@@ -37,7 +37,7 @@ export const directApi = {
   },
   deletePost: (id: string, remote = false) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}${remote ? '?remote=1' : ''}`),
   igStart: (facebookVideoId: string, caption: string) =>
-    json<{ state: 'waiting' | 'processing'; containerId?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
+    json<{ state: 'waiting' | 'processing'; containerId?: string; fbStatus?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
   igCheck: (containerId: string, deleteFacebookVideoId?: string) =>
     json<{ state: 'processing' | 'published' | 'failed'; id?: string; url?: string; error?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId }),
 };
@@ -167,7 +167,7 @@ export async function publishInstagram(facebookVideoId: string, caption: string,
       if (Date.now() > deadline) throw new Error(lastError || 'O Facebook demorou demais para processar o vídeo; o Instagram não foi publicado.');
       const r = await directApi.igStart(facebookVideoId, caption);
       if (r.containerId) containerId = r.containerId;
-      else { onStatus('Aguardando o Facebook terminar de processar o vídeo…'); await sleep(8000); }
+      else { onStatus(`Aguardando o Facebook terminar de processar o vídeo (${r.fbStatus ?? '…'})`); await sleep(8000); }
     }
     for (;;) {
       if (Date.now() > deadline) throw new Error(lastError || 'O Instagram demorou demais para processar o vídeo.');
