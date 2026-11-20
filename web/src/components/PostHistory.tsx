@@ -110,6 +110,11 @@ export function PostHistory() {
     else days.push({ key: k, label: dayLabel(g.when, now), items: [g] });
   }
 
+  const removeVideo = async (g: VideoGroup) => {
+    if (!confirm(`Apagar "${g.title}" do histórico (${g.posts.map((p) => NET_LABEL[p.platform]).join(', ')})?\n\nIsso NÃO apaga o vídeo das redes.`)) return;
+    for (const p of g.posts) await directApi.deletePost(p.id).catch((e) => setError(e.message));
+    void load();
+  };
   const remove = async (p: PostRecord) => {
     if (!confirm(`Apagar o registro de ${NET_LABEL[p.platform]} do histórico?\n\nIsso NÃO apaga o vídeo da rede.`)) return;
     await directApi.deletePost(p.id).catch((e) => setError(e.message));
@@ -169,13 +174,18 @@ export function PostHistory() {
               <div className="history-main">
                 <div className="history-title">
                   <strong title={g.title}>{g.title}</strong>
-                  {g.when && (
-                    <span className="history-when">
-                      <Icon name="clock" size={13} />
-                      {g.when.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      <em>{relative(g.when, now)}</em>
-                    </span>
-                  )}
+                  <span className="history-actions">
+                    {g.when && (
+                      <span className="history-when">
+                        <Icon name="clock" size={13} />
+                        {g.when.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        <em>{relative(g.when, now)}</em>
+                      </span>
+                    )}
+                    <button className="history-delete" onClick={() => void removeVideo(g)} title="Apagar este vídeo do histórico">
+                      <Icon name="trash" size={14} />Apagar
+                    </button>
+                  </span>
                 </div>
                 <ul className="history-nets">
                   {g.posts.map((p) => {
@@ -186,7 +196,7 @@ export function PostHistory() {
                         <span className="net-name">{NET_LABEL[p.platform]}</span>
                         <span className={`history-pill ${st.cls}`}>{st.label}</span>
                         {p.url && <a href={p.url} target="_blank" rel="noreferrer" className="net-link">Abrir ↗</a>}
-                        <button className="net-remove" title="Apagar do histórico" aria-label={`Apagar registro de ${NET_LABEL[p.platform]}`} onClick={() => void remove(p)}>×</button>
+                        <button className="net-remove" title={`Apagar só o ${NET_LABEL[p.platform]} do histórico`} aria-label={`Apagar registro de ${NET_LABEL[p.platform]}`} onClick={() => void remove(p)}><Icon name="trash" size={13} /></button>
                         {p.error && <span className="net-error">{p.error}</span>}
                       </li>
                     );

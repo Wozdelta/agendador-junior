@@ -66,9 +66,8 @@
 .net-link:hover { text-decoration: underline; }
 .net-remove {
   min-height: 0; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 7px; background: transparent;
-  color: #6e7690; font-size: 16px; line-height: 1; box-shadow: none; opacity: 0; transition: opacity .15s;
+  display: grid; place-items: center; color: #8b93ad; box-shadow: none;
 }
-.history-net:hover .net-remove, .net-remove:focus-visible { opacity: 1; }
 .net-remove:hover { color: var(--danger); background: #ff929d14; }
 .net-error { flex-basis: 100%; color: var(--danger); font-size: 12px; padding: 0 4px 2px; }
 
@@ -90,6 +89,12 @@
   .history-card { grid-template-columns: 56px 1fr; gap: 12px; padding: 14px; }
   .history-thumb { width: 56px; }
   .history-title strong { white-space: normal; }
-  .net-remove { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .history-card { transition: none; } .history-card:hover { transform: none; } }
+
+.history-actions { display: inline-flex; align-items: center; gap: 14px; }
+.history-delete {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border-radius: 10px;
+  font-size: 12px; color: #c3c8da; background: #ffffff06; border: 1px solid var(--border); box-shadow: none;
+}
+.history-delete:hover { color: var(--danger); border-color: #ff929d55; background: #ff929d12; }
