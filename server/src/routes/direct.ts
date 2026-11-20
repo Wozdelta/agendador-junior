@@ -68,26 +68,46 @@ export function directRoutes(ctx: AppContext): Router {
     if (!path) return;
     try { await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).remove([path]); } catch {}
   };
-  r.post('/direct/instagram/stage', ah(async (_req, res) => {
-    const path = `ig-temp/${crypto.randomUUID()}.mp4`;
-    const { data, error } = await supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET).createSignedUploadUrl(path);
-    if (error || !data) throw new AppError(503, `Não deu para preparar o envio ao Instagram: ${error?.message ?? 'sem resposta'}`);
-    res.json({ path, uploadUrl: data.signedUrl });
+  // O vídeo chega em partes de até 45 MB (limite do Storage); o servidor junta e manda inteiro ao Instagram.
+  r.post('/direct/instagram/stage', ah(async (req, res) => {
+    const n = Math.min(20, Math.max(1, Number(req.body?.parts) || 1));
+    const id = crypto.randomUUID();
+    const sb = supabase(ctx.config, true, ctx.fetch).storage.from(MEDIA_BUCKET);
+    const parts: Array<{ path: string; uploadUrl: string }> = [];
+    for (let i = 0; i < n; i++) {
+      const path = `ig-temp/${id}-${i}.mp4`;
+      const { data, error } = await sb.createSignedUploadUrl(path);
+      if (error || !data) throw new AppError(503, `Não deu para preparar o envio ao Instagram: ${error?.message ?? 'sem resposta'}`);
+      parts.push({ path, uploadUrl: data.signedUrl });
+    }
+    res.json({ path: parts[0].path, uploadUrl: parts[0].uploadUrl, parts });
   }));
+  const tempPaths = (v: unknown) => (Array.isArray(v) ? v.map(tempPath).filter((x): x is string => !!x).slice(0, 20) : []);
   r.post('/direct/instagram/unstage', ah(async (req, res) => {
-    await dropTemp(tempPath(req.body?.path));
+    for (const p of [tempPath(req.body?.path), ...tempPaths(req.body?.paths)]) await dropTemp(p);
     res.json({ ok: true });
   }));
 
   r.post('/direct/instagram/create', ah(async (req, res) => {
     await mc().connections.refresh();
     const staged = tempPath(req.body?.path);
+    const many = tempPaths(req.body?.paths);
+    const sizes = Array.isArray(req.body?.sizes) ? req.body.sizes.map(Number) : [];
+    let videoUrl: string | undefined;
+    if (many.length > 1) {
+      if (sizes.length !== many.length || sizes.some((n: number) => !Number.isFinite(n) || n <= 0)) throw new AppError(400, 'Tamanhos das partes inválidos.');
+      const m = /^ig-temp\/([\w-]+)-0\.mp4$/.exec(many[0]);
+      if (!m) throw new AppError(400, 'Partes do vídeo inválidas.');
+      videoUrl = igMediaUrl(ctx, m[1], sizes);
+    } else if (many.length === 1 || staged) {
+      videoUrl = await storageUrl(ctx.config, many[0] ?? staged!, ctx.fetch, 3600);
+    }
     const page = selectedPage(ctx, mc());
     if (!page.instagram) throw new AppError(409, 'A Página escolhida não tem Instagram profissional vinculado.');
     const c = await graph(ctx, `/${page.instagram.id}/media`, {
       method: 'POST', token: page.token, what: 'Criação do Reel',
-      params: staged
-        ? { media_type: 'REELS', video_url: await storageUrl(ctx.config, staged, ctx.fetch, 3600), caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true }
+      params: videoUrl
+        ? { media_type: 'REELS', video_url: videoUrl, caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true }
         : { media_type: 'REELS', upload_type: 'resumable', caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
     });
     res.json({ containerId: c.id });
@@ -193,6 +213,61 @@ export function directRoutes(ctx: AppContext): Router {
     }
     await mc().posts.mutate((d) => { const i = d.findIndex((x) => x.id === req.params.id); if (i >= 0) d.splice(i, 1); });
     res.json({ ok: true, warning });
+  }));
+  return r;
+}
+
+// ---------- link público temporário que junta as partes (o Instagram baixa daqui) ----------
+const sign = (ctx: AppContext, id: string, sizes: number[], exp: number) =>
+  crypto.createHmac('sha256', ctx.config.meta.appSecret || ctx.config.tokenKey || 'agendador').update(`${id}|${sizes.join(',')}|${exp}`).digest('hex');
+
+function igMediaUrl(ctx: AppContext, id: string, sizes: number[]) {
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const base = ctx.config.appUrl || ctx.config.publicBaseUrl;
+  return `${base}/api/direct/ig-media/${id}.mp4?s=${sizes.join(',')}&exp=${exp}&sig=${sign(ctx, id, sizes, exp)}`;
+}
+
+/** Rota sem login: só responde com assinatura válida e dentro do prazo (1 h). Suporta Range. */
+export function directPublicRoutes(ctx: AppContext): Router {
+  const r = Router();
+  r.get('/direct/ig-media/:file', ah(async (req, res) => {
+    const m = /^([\w-]{10,64})\.mp4$/.exec(String(req.params.file));
+    const sizes = String(req.query.s ?? '').split(',').map(Number);
+    const exp = Number(req.query.exp);
+    const sig = String(req.query.sig ?? '');
+    if (!m || !sizes.length || sizes.length > 20 || sizes.some((n) => !Number.isFinite(n) || n <= 0) || !Number.isFinite(exp)) throw new AppError(404, 'Não encontrado.');
+    const good = sign(ctx, m[1], sizes, exp);
+    if (sig.length !== good.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good)) || exp < Date.now() / 1000) throw new AppError(404, 'Não encontrado.');
+    const total = sizes.reduce((a, b) => a + b, 0);
+    let start = 0, end = total - 1;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''));
+    if (range && (range[1] || range[2])) {
+      if (range[1]) { start = Number(range[1]); if (range[2]) end = Math.min(total - 1, Number(range[2])); }
+      else { start = Math.max(0, total - Number(range[2])); }
+      if (start > end || start >= total) { res.status(416).setHeader('Content-Range', `bytes */${total}`); return res.end(); }
+      res.status(206).setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+    }
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Length', String(end - start + 1));
+    if (req.method === 'HEAD') return res.end();
+    let offset = 0;
+    for (let i = 0; i < sizes.length; i++) {
+      const a = Math.max(start, offset), b = Math.min(end, offset + sizes[i] - 1);
+      if (a <= b) {
+        const url = await storageUrl(ctx.config, `ig-temp/${m[1]}-${i}.mp4`, ctx.fetch, 600);
+        const part = await fetch(url, { headers: { Range: `bytes=${a - offset}-${b - offset}` } });
+        if (!part.ok || !part.body) throw new AppError(502, `Parte ${i} indisponível (${part.status}).`);
+        const reader = part.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!res.write(value)) await new Promise<void>((ok) => res.once('drain', () => ok()));
+        }
+      }
+      offset += sizes[i];
+    }
+    res.end();
   }));
   return r;
 }

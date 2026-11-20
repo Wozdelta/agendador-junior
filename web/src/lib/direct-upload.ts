@@ -39,8 +39,9 @@ export const directApi = {
   igStart: (facebookVideoId: string, caption: string) =>
     json<{ state: 'waiting' | 'processing'; containerId?: string; fbStatus?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
   igCreate: (caption: string, path?: string) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption, path }),
-  igStage: () => json<{ path: string; uploadUrl: string }>('POST', '/api/direct/instagram/stage', {}),
-  igUnstage: (path: string) => json<{ ok: true }>('POST', '/api/direct/instagram/unstage', { path }),
+  igStage: (parts: number) => json<{ parts: Array<{ path: string; uploadUrl: string }> }>('POST', '/api/direct/instagram/stage', { parts }),
+  igUnstage: (paths: string[]) => json<{ ok: true }>('POST', '/api/direct/instagram/unstage', { paths }),
+  igCreateParts: (caption: string, paths: string[], sizes: number[]) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption, paths, sizes }),
   igCheck: (containerId: string, deleteFacebookVideoId?: string, path?: string) =>
     json<{ state: 'processing' | 'published' | 'failed'; id?: string; url?: string; error?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId, path }),
 };
@@ -165,41 +166,56 @@ export async function uploadFacebook(
  * Instagram: o vídeo vai para uma pasta temporária (só durante o envio), o Instagram baixa
  * de lá e o arquivo é apagado em seguida — dando certo ou não.
  */
+/**
+ * Instagram: o vídeo vai em partes de até 45 MB para uma pasta temporária (o Storage aceita no
+ * máximo 50 MB por arquivo). O Instagram baixa por um link nosso que junta as partes.
+ * As partes são apagadas no fim, dando certo ou não.
+ */
 export async function uploadInstagram(video: File, caption: string, onProgress: Progress, onStatus: (msg: string) => void) {
+  const PART = 45 * 1024 * 1024;
+  const count = Math.max(1, Math.ceil(video.size / PART));
   onStatus('Preparando envio ao Instagram…');
-  const { path, uploadUrl } = await directApi.igStage();
+  const { parts } = await directApi.igStage(count);
+  const paths = parts.map((p) => p.path);
+  const sizes = parts.map((_, i) => Math.min(PART, video.size - i * PART));
   try {
-    onStatus('Enviando vídeo ao Instagram…');
-    let up: { status: number; json: any } = { status: 0, json: null };
-    for (let k = 1; k <= 3; k++) {
-      try {
-        up = await xhr('PUT', uploadUrl, video, { 'Content-Type': video.type || 'video/mp4', 'x-upsert': 'true' }, onProgress);
-        if (up.status < 300) break;
-      } catch (e: any) {
-        up = { status: 0, json: { message: e.message } };
+    for (let i = 0; i < parts.length; i++) {
+      const start = i * PART;
+      const blob = video.slice(start, Math.min(start + PART, video.size), 'video/mp4');
+      const label = parts.length > 1 ? ` (parte ${i + 1} de ${parts.length})` : '';
+      let up: { status: number; json: any } = { status: 0, json: null };
+      for (let k = 1; k <= 3; k++) {
+        onStatus(`Enviando vídeo ao Instagram${label}${k > 1 ? ` — tentativa ${k} de 3` : ''}…`);
+        try {
+          up = await xhr('PUT', parts[i].uploadUrl, blob, { 'Content-Type': 'video/mp4', 'x-upsert': 'true' }, (n) => onProgress(start + n));
+          if (up.status < 300) break;
+        } catch (e: any) {
+          up = { status: 0, json: { message: e.message } };
+        }
+        if (k < 3) await sleep(4000);
       }
-      if (k < 3) { onStatus(`Conexão caiu no envio ao Instagram — tentando de novo (${k + 1} de 3)…`); await sleep(4000); }
+      if (up.status === 0 || up.status >= 300) throw new Error(`Envio ao Instagram falhou${label} (${up.status}): ${up.json?.message ?? up.json?.error ?? 'sem detalhe'}`);
     }
-    if (up.status === 0 || up.status >= 300) throw new Error(`Envio ao Instagram falhou (${up.status}): ${up.json?.message ?? up.json?.error ?? 'sem detalhe'}`);
     onProgress(video.size);
     let lastError = '';
     for (let attempt = 1; attempt <= 3; attempt++) {
       const tries = attempt > 1 ? ` (tentativa ${attempt} de 3)` : '';
       onStatus(`Criando o Reel${tries}…`);
-      const { containerId } = await directApi.igCreate(caption, path);
+      const { containerId } = await directApi.igCreateParts(caption, paths, sizes);
       const deadline = Date.now() + 15 * 60_000;
       for (;;) {
         if (Date.now() > deadline) throw new Error('O Instagram demorou demais para processar o vídeo.');
         onStatus(`Instagram processando o Reel${tries}…`);
         await sleep(5000);
-        const r = await directApi.igCheck(containerId, undefined, path);
+        const r = await directApi.igCheck(containerId);
+        // (as partes ficam até o fim: o Instagram pode baixar de novo numa nova tentativa)
         if (r.state === 'published') return r;
         if (r.state === 'failed') { lastError = r.error || 'O Instagram não processou o vídeo.'; onStatus(`${lastError} — tentando de novo…`); await sleep(10000); break; }
       }
     }
     throw new Error(lastError);
   } finally {
-    await directApi.igUnstage(path).catch(() => undefined);
+    await directApi.igUnstage(paths).catch(() => undefined);
   }
 }
 
