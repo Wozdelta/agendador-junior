@@ -1,28 +1,41 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Platform, PostRecord } from '../../../server/src/shared/types';
+import { RULES } from '../../../server/src/shared/limits';
 import { buildGroups, filesFromDrop, filesFromInput, type ImportGroup } from '../lib/folder-import';
 import { directApi, publishInstagram, uploadFacebook, uploadYouTube } from '../lib/direct-upload';
 import { Icon } from './ui/Icon';
 
 type Net = 'youtube' | 'facebook' | 'instagram';
-const NETS: Array<{ id: Net; label: string }> = [
-  { id: 'youtube', label: 'YouTube' },
-  { id: 'facebook', label: 'Facebook' },
-  { id: 'instagram', label: 'Instagram (publica na hora)' },
+const NETS: Array<{ id: Net; label: string; kind: string }> = [
+  { id: 'youtube', label: 'YouTube', kind: 'agendado na data' },
+  { id: 'facebook', label: 'Facebook', kind: 'agendado na data' },
+  { id: 'instagram', label: 'Instagram', kind: 'publica na hora do envio' },
 ];
+const NET_LABEL: Record<Platform, string> = { youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok' };
 
+type Phase = 'waiting' | 'sending' | 'processing' | 'scheduled' | 'published' | 'failed' | 'skipped';
+interface NetState { phase: Phase; sent: number; step?: string; error?: string; url?: string; note?: string }
 interface Row extends ImportGroup {
   key: string;
-  ytTitle: string;
-  ytDesc: string;
-  fbTitle: string;
-  fbDesc: string;
-  igDesc: string;
-  status: Partial<Record<Net, string>>;
+  videoUrl: string;
+  coverUrl?: string;
+  duration?: number;
+  dims?: string;
+  texts: Record<Net, { title: string; description: string }>;
+  state: Partial<Record<Net, NetState>>;
 }
+interface LogLine { at: Date; text: string; level: 'info' | 'ok' | 'error' }
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const localInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const mb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
+const fmtDate = (d: Date) => d.toLocaleString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function fmtTime(sec: number) {
+  if (!isFinite(sec) || sec < 0) return '—';
+  if (sec < 60) return `${Math.ceil(sec)} s`;
+  const m = Math.floor(sec / 60), s = Math.round(sec % 60);
+  return m < 60 ? `${m} min ${pad(s)} s` : `${Math.floor(m / 60)} h ${pad(m % 60)} min`;
+}
 function defaultStart() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
@@ -32,14 +45,25 @@ function defaultStart() {
 
 function toRow(g: ImportGroup, i: number): Row {
   const base = g.video.name.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+  const yt = g.texts?.youtube;
   return {
-    ...g, key: `${Date.now()}-${i}-${g.video.name}`,
-    ytTitle: g.texts?.youtube?.title ?? base, ytDesc: g.texts?.youtube?.description ?? '',
-    fbTitle: g.texts?.facebook?.title ?? g.texts?.youtube?.title ?? base, fbDesc: g.texts?.facebook?.description ?? '',
-    igDesc: g.texts?.instagram?.description ?? '',
-    status: {},
+    ...g,
+    key: `${Date.now()}-${i}-${g.video.name}`,
+    videoUrl: URL.createObjectURL(g.video),
+    coverUrl: g.cover ? URL.createObjectURL(g.cover) : undefined,
+    texts: {
+      youtube: { title: yt?.title ?? base, description: yt?.description ?? '' },
+      facebook: { title: g.texts?.facebook?.title ?? yt?.title ?? base, description: g.texts?.facebook?.description ?? '' },
+      instagram: { title: '', description: g.texts?.instagram?.description ?? '' },
+    },
+    state: {},
   };
 }
+
+const PHASE_LABEL: Record<Phase, string> = {
+  waiting: 'Na fila', sending: 'Enviando', processing: 'Processando', scheduled: 'Agendado ✅',
+  published: 'Publicado ✅', failed: 'Falhou ❌', skipped: 'Não enviado',
+};
 
 export function DirectPost() {
   const [rows, setRows] = useState<Row[]>([]);
@@ -49,47 +73,100 @@ export function DirectPost() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
+  const [log, setLog] = useState<LogLine[]>([]);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => { clearInterval(t); window.removeEventListener('beforeunload', warn); };
+  }, [busy]);
+
   const add = (groups: ImportGroup[]) => {
-    if (!groups.length) return setError('Nenhum vídeo MP4/MOV encontrado.');
+    if (!groups.length) return setError('Nenhum vídeo MP4/MOV encontrado no que foi solto.');
     setError(null);
-    setRows((r) => [...r, ...groups.map(toRow)]);
+    setRows((r) => [...r, ...groups.map((g, i) => toRow(g, r.length + i))]);
   };
   const dateFor = (i: number) => {
     const d = new Date(start);
     d.setDate(d.getDate() + i * everyDays);
     return d;
   };
-  const patch = (key: string, p: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...p } : x)));
-  const setStatus = (key: string, net: Net, msg: string) =>
-    setRows((r) => r.map((x) => (x.key === key ? { ...x, status: { ...x.status, [net]: msg } } : x)));
+  const patchRow = (key: string, fn: (r: Row) => Row) => setRows((r) => r.map((x) => (x.key === key ? fn(x) : x)));
+  const setNet = (key: string, net: Net, p: Partial<NetState>) =>
+    patchRow(key, (x) => ({ ...x, state: { ...x.state, [net]: { phase: 'waiting', sent: 0, ...x.state[net], ...p } } }));
+  const say = (text: string, level: LogLine['level'] = 'info') => setLog((l) => [...l, { at: new Date(), text, level }]);
+  const move = (i: number, d: -1 | 1) => setRows((r) => {
+    const j = i + d; if (j < 0 || j >= r.length) return r;
+    const c = [...r]; [c[i], c[j]] = [c[j], c[i]]; return c;
+  });
+
+  // Total de bytes a enviar: cada vídeo vai uma vez ao YouTube e uma vez ao Facebook
+  // (o Instagram reaproveita o envio do Facebook).
+  const uploadsPerVideo = (nets.youtube ? 1 : 0) + (nets.facebook || nets.instagram ? 1 : 0);
+  const totalBytes = rows.reduce((s, r) => s + r.video.size * uploadsPerVideo, 0);
+  const sentBytes = rows.reduce((s, r) => s + Math.min(r.state.youtube?.sent ?? 0, r.video.size)
+    + Math.min(Math.max(r.state.facebook?.sent ?? 0, nets.facebook ? 0 : r.state.instagram?.sent ?? 0), r.video.size), 0);
+  const elapsed = startedAt ? (now - startedAt) / 1000 : 0;
+  const speed = elapsed > 2 ? sentBytes / elapsed : 0;
+  const eta = speed > 0 ? (totalBytes - sentBytes) / speed : NaN;
+  const pct = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
+  const counts = useMemo(() => {
+    const c = { ok: 0, failed: 0, total: 0 };
+    for (const r of rows) for (const n of NETS) if (nets[n.id]) {
+      c.total++;
+      const ph = r.state[n.id]?.phase;
+      if (ph === 'scheduled' || ph === 'published') c.ok++;
+      if (ph === 'failed') c.failed++;
+    }
+    return c;
+  }, [rows, nets]);
 
   const run = async () => {
     setError(null);
     if (!rows.length) return setError('Adicione pelo menos um vídeo.');
     if (!nets.youtube && !nets.facebook && !nets.instagram) return setError('Escolha pelo menos uma rede.');
+    const missing = rows.find((r) => nets.youtube && !r.texts.youtube.title.trim());
+    if (missing) return setError(`"${missing.name}": o YouTube exige título.`);
     setBusy(true);
+    setLog([]);
+    setStartedAt(Date.now());
+    for (const r of rows) setRows((x) => x.map((y) => (y.key === r.key ? { ...y, state: Object.fromEntries(NETS.filter((n) => nets[n.id]).map((n) => [n.id, { phase: 'waiting', sent: 0 }])) } : y)));
     try {
+      say('Conferindo as contas conectadas…');
       const s = await directApi.session();
       for (const n of NETS) if (nets[n.id] && s.errors[n.id]) throw new Error(`${n.label}: ${s.errors[n.id]}`);
+      say(`Contas ok${s.facebook ? ` · Página "${s.facebook.pageName}"` : ''}${s.instagram ? ` · Instagram @${s.instagram.username}` : ''}.`, 'ok');
+
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const when = dateFor(i);
-        const log = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
-          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, publishAt: when.toISOString(), ...extra }).catch(() => undefined);
+        const tag = `[${i + 1}/${rows.length}] ${row.name}`;
+        const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
+          directApi.savePost({ id: `${row.key}-${platform}`, platform, status, video: row.name, publishAt: when.toISOString(), ...extra })
+            .catch((e) => say(`Aviso: não salvei no histórico (${e.message}).`, 'error'));
 
         if (nets.youtube) {
+          const t = row.texts.youtube;
           try {
-            await log('youtube', 'sending', { title: row.ytTitle });
-            const r = await uploadYouTube(s, row.video, row.cover, { title: row.ytTitle, description: row.ytDesc, publishAt: when },
-              (p) => setStatus(row.key, 'youtube', `Enviando ${p}%`));
-            setStatus(row.key, 'youtube', `✅ Agendado ${when.toLocaleString('pt-BR')}${r.note ? ` · ${r.note}` : ''}`);
-            await log('youtube', when.getTime() > Date.now() + 60_000 ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
+            say(`${tag} → YouTube: começando (${mb(row.video.size)}).`);
+            setNet(row.key, 'youtube', { phase: 'sending', step: 'Iniciando…' });
+            await record('youtube', 'sending', { title: t.title });
+            const r = await uploadYouTube(s, row.video, row.cover, { title: t.title, description: t.description, publishAt: when },
+              (sent) => setNet(row.key, 'youtube', { sent }), (step) => setNet(row.key, 'youtube', { step }));
+            const scheduled = when.getTime() > Date.now() + 60_000;
+            setNet(row.key, 'youtube', { phase: scheduled ? 'scheduled' : 'published', sent: row.video.size, step: undefined, url: r.url, note: r.note });
+            say(`${tag} → YouTube: ${scheduled ? `agendado para ${fmtDate(when)}` : 'publicado'}.${r.note ? ` ${r.note}` : ''}`, 'ok');
+            await record('youtube', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
           } catch (e: any) {
-            setStatus(row.key, 'youtube', `❌ ${e.message}`);
-            await log('youtube', 'failed', { error: e.message });
+            setNet(row.key, 'youtube', { phase: 'failed', error: e.message, step: undefined });
+            say(`${tag} → YouTube falhou: ${e.message}`, 'error');
+            await record('youtube', 'failed', { error: e.message });
           }
         }
 
@@ -97,41 +174,58 @@ export function DirectPost() {
         if (nets.facebook || nets.instagram) {
           const hidden = !nets.facebook; // só como ponte para o Instagram
           const net: Net = hidden ? 'instagram' : 'facebook';
+          const t = row.texts.facebook;
           try {
-            if (!hidden) await log('facebook', 'sending', { title: row.fbTitle });
-            const r = await uploadFacebook(s, row.video, row.cover, { title: row.fbTitle, description: row.fbDesc, publishAt: when, hidden },
-              (p) => setStatus(row.key, net, `${hidden ? 'Preparando' : 'Enviando'} ${p}%`));
+            say(`${tag} → Facebook: começando${hidden ? ' (oculto, só para o Instagram puxar o vídeo)' : ''}.`);
+            setNet(row.key, net, { phase: 'sending', step: 'Iniciando…' });
+            if (!hidden) await record('facebook', 'sending', { title: t.title });
+            const r = await uploadFacebook(s, row.video, row.cover, { title: t.title, description: t.description, publishAt: when, hidden },
+              (sent) => setNet(row.key, net, { sent }), (step) => setNet(row.key, net, { step }));
             fbId = r.id;
             if (!hidden) {
               const scheduled = when.getTime() > Date.now() + 11 * 60_000;
-              setStatus(row.key, 'facebook', scheduled ? `✅ Agendado ${when.toLocaleString('pt-BR')}` : '✅ Publicado');
-              await log('facebook', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
+              setNet(row.key, 'facebook', { phase: scheduled ? 'scheduled' : 'published', sent: row.video.size, step: undefined, url: r.url });
+              say(`${tag} → Facebook: ${scheduled ? `agendado para ${fmtDate(when)}` : 'publicado'}.`, 'ok');
+              await record('facebook', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
             }
           } catch (e: any) {
-            setStatus(row.key, net, `❌ ${e.message}`);
-            if (!hidden) await log('facebook', 'failed', { error: e.message });
-            if (nets.instagram && hidden) await log('instagram', 'failed', { error: e.message });
+            setNet(row.key, net, { phase: 'failed', error: e.message, step: undefined });
+            say(`${tag} → Facebook falhou: ${e.message}`, 'error');
+            if (!hidden) await record('facebook', 'failed', { error: e.message });
+            if (nets.instagram) {
+              if (!hidden) setNet(row.key, 'instagram', { phase: 'skipped', error: 'Depende do envio ao Facebook, que falhou.' });
+              await record('instagram', 'failed', { error: 'O envio ao Facebook falhou; o Instagram usa esse vídeo.' });
+            }
           }
         }
 
         if (nets.instagram && fbId) {
           try {
-            await log('instagram', 'sending', { title: row.igDesc.split('\n')[0] });
-            const r = await publishInstagram(fbId, row.igDesc, !nets.facebook, (m) => setStatus(row.key, 'instagram', m));
-            setStatus(row.key, 'instagram', '✅ Publicado agora');
-            await log('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
+            say(`${tag} → Instagram: aguardando o Facebook processar para publicar o Reel.`);
+            setNet(row.key, 'instagram', { phase: 'processing', sent: row.video.size, step: 'Aguardando o Facebook processar…' });
+            await record('instagram', 'sending', { title: row.texts.instagram.description.split('\n')[0] });
+            const r = await publishInstagram(fbId, row.texts.instagram.description, !nets.facebook, (step) => setNet(row.key, 'instagram', { step }));
+            setNet(row.key, 'instagram', { phase: 'published', step: undefined, url: r.url });
+            say(`${tag} → Instagram: publicado agora.`, 'ok');
+            await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
           } catch (e: any) {
-            setStatus(row.key, 'instagram', `❌ ${e.message}`);
-            await log('instagram', 'failed', { error: e.message });
+            setNet(row.key, 'instagram', { phase: 'failed', error: e.message, step: undefined });
+            say(`${tag} → Instagram falhou: ${e.message}`, 'error');
+            await record('instagram', 'failed', { error: e.message });
           }
         }
       }
+      say('Terminado. Confira o resumo de cada vídeo abaixo e a aba Histórico.', 'ok');
     } catch (e: any) {
       setError(e.message);
+      say(`Parado: ${e.message}`, 'error');
     } finally {
       setBusy(false);
+      setNow(Date.now());
     }
   };
+
+  const finished = !busy && startedAt !== null && counts.total > 0;
 
   return (
     <div className="new-batch">
@@ -151,7 +245,8 @@ export function DirectPost() {
             <label key={n.id} className={`platform-card ${n.id} ${nets[n.id] ? 'is-selected' : ''}`}>
               <input type="checkbox" checked={nets[n.id]} disabled={busy} onChange={(e) => setNets({ ...nets, [n.id]: e.target.checked })} />
               <span className="platform-avatar"><Icon name={n.id} size={22} /></span>
-              <span className="platform-name">{n.label}</span>
+              <span className="platform-name">{n.label}<small>{n.kind}</small></span>
+              <span className="selection-check"><Icon name="check" size={13} /></span>
             </label>
           ))}
           <label className="platform-card tiktok" style={{ opacity: 0.5, cursor: 'not-allowed' }}>
@@ -166,71 +261,193 @@ export function DirectPost() {
         </div>
       </section>
 
-      <section
-        className={drag ? 'dropzone over' : 'dropzone'}
-        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDrag(false);
-          if (busy) return;
-          void filesFromDrop(e.dataTransfer).then(buildGroups).then(add).catch((err) => setError(err.message));
-        }}
-      >
-        <p>
-          <strong>Arraste vídeos ou pastas aqui</strong><br />
-          <span className="muted">Em cada pasta: o vídeo, a imagem JPG (capa) e o .txt (títulos e descrições).</span>
-        </p>
-        <button className="primary" disabled={busy} onClick={() => fileInput.current?.click()}><Icon name="plus" size={17} />Selecionar vídeos</button>
-        <button disabled={busy} onClick={() => folderInput.current?.click()}><Icon name="plus" size={17} />Selecionar pasta</button>
-        <input ref={fileInput} type="file" multiple hidden accept="video/mp4,video/quicktime,.mp4,.mov,.jpg,.jpeg,.txt"
-          onChange={(e) => { if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(add); e.target.value = ''; }} />
-        <input ref={folderInput} type="file" multiple hidden {...({ webkitdirectory: '', directory: '' } as any)}
-          onChange={(e) => { if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(add); e.target.value = ''; }} />
-      </section>
-
-      {rows.map((r, i) => (
-        <section className="panel" key={r.key}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-            <h3 style={{ margin: 0 }}>{i + 1}. {r.name}</h3>
-            <span className="muted">
-              {(r.video.size / 1048576).toFixed(0)} MB · {r.cover ? 'com capa' : 'sem capa'} · {dateFor(i).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
-              {!busy && <> · <button className="link" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}>remover</button></>}
-            </span>
-          </div>
-          {nets.youtube && <>
-            <label>YouTube · título<input value={r.ytTitle} maxLength={100} disabled={busy} onChange={(e) => patch(r.key, { ytTitle: e.target.value })} /></label>
-            <label>YouTube · descrição<textarea rows={3} value={r.ytDesc} disabled={busy} onChange={(e) => patch(r.key, { ytDesc: e.target.value })} /></label>
-          </>}
-          {nets.facebook && <>
-            <label>Facebook · título<input value={r.fbTitle} disabled={busy} onChange={(e) => patch(r.key, { fbTitle: e.target.value })} /></label>
-            <label>Facebook · descrição<textarea rows={3} value={r.fbDesc} disabled={busy} onChange={(e) => patch(r.key, { fbDesc: e.target.value })} /></label>
-          </>}
-          {nets.instagram && <label>Instagram · legenda<textarea rows={3} value={r.igDesc} maxLength={2200} disabled={busy} onChange={(e) => patch(r.key, { igDesc: e.target.value })} /></label>}
-          {Object.keys(r.status).length > 0 && (
-            <ul className="muted">
-              {NETS.filter((n) => r.status[n.id]).map((n) => <li key={n.id}><strong>{n.label.split(' ')[0]}:</strong> {r.status[n.id]}</li>)}
-            </ul>
-          )}
+      {!busy && (
+        <section
+          className={drag ? 'dropzone over' : 'dropzone'}
+          onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDrag(false);
+            void filesFromDrop(e.dataTransfer).then(buildGroups).then(add).catch((err) => setError(err.message));
+          }}
+        >
+          <p>
+            <strong>Arraste vídeos ou pastas aqui</strong><br />
+            <span className="muted">Em cada pasta: o vídeo, a imagem JPG (capa) e o .txt (títulos e descrições). Tudo é preenchido sozinho — confira antes de postar.</span>
+          </p>
+          <button className="primary" onClick={() => fileInput.current?.click()}><Icon name="plus" size={17} />Selecionar vídeos</button>
+          <button onClick={() => folderInput.current?.click()}><Icon name="plus" size={17} />Selecionar pasta</button>
+          <input ref={fileInput} type="file" multiple hidden accept="video/mp4,video/quicktime,.mp4,.mov,.jpg,.jpeg,.txt"
+            onChange={(e) => { if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(add); e.target.value = ''; }} />
+          <input ref={folderInput} type="file" multiple hidden {...({ webkitdirectory: '', directory: '' } as any)}
+            onChange={(e) => { if (e.target.files) void buildGroups(filesFromInput(e.target.files)).then(add); e.target.value = ''; }} />
         </section>
-      ))}
+      )}
+
+      {(busy || finished) && (
+        <section className="panel" aria-live="polite">
+          <h3>{busy ? 'Enviando… não feche esta aba' : 'Resultado do envio'}</h3>
+          <progress max={100} value={pct} style={{ width: '100%', height: 14 }} />
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 6 }}>
+            <span><strong>{pct}%</strong> · {mb(sentBytes)} de {mb(totalBytes)}</span>
+            {busy && <span>Velocidade: <strong>{speed ? `${mb(speed)}/s` : 'medindo…'}</strong></span>}
+            {busy && <span>Falta: <strong>{fmtTime(eta)}</strong></span>}
+            <span>Tempo: {fmtTime(elapsed)}</span>
+            <span>✅ {counts.ok} de {counts.total} prontos{counts.failed ? ` · ❌ ${counts.failed} falharam` : ''}</span>
+          </div>
+          <details open={busy || counts.failed > 0} style={{ marginTop: 10 }}>
+            <summary>Registro detalhado ({log.length})</summary>
+            <ol style={{ maxHeight: 220, overflow: 'auto', fontSize: 13, paddingLeft: 18 }}>
+              {log.map((l, i) => (
+                <li key={i} style={{ color: l.level === 'error' ? 'var(--danger, #d33)' : l.level === 'ok' ? 'var(--success, #2a7)' : undefined }}>
+                  <span className="muted">{l.at.toLocaleTimeString('pt-BR')}</span> {l.text}
+                </li>
+              ))}
+            </ol>
+          </details>
+          {finished && <a className="button" href="#/agenda">Ver Histórico<Icon name="arrow" size={16} /></a>}
+        </section>
+      )}
 
       {rows.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button className="primary" disabled={busy} onClick={() => void run()}>
-            <Icon name="upload" size={17} />{busy ? 'Enviando… não feche esta aba' : `Postar ${rows.length} vídeo(s)`}
+        <section className="items">
+          {rows.map((r, i) => (
+            <DirectCard key={r.key} row={r} index={i} total={rows.length} when={dateFor(i)} nets={nets} busy={busy}
+              onMove={(d) => move(i, d)}
+              onRemove={() => setRows(rows.filter((x) => x.key !== r.key))}
+              onText={(net, p) => patchRow(r.key, (x) => ({ ...x, texts: { ...x.texts, [net]: { ...x.texts[net], ...p } } }))}
+              onCover={(file) => patchRow(r.key, (x) => ({ ...x, cover: file, coverUrl: URL.createObjectURL(file) }))}
+              onMeta={(duration, dims) => patchRow(r.key, (x) => ({ ...x, duration, dims }))}
+            />
+          ))}
+        </section>
+      )}
+
+      {rows.length > 0 && !busy && (
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="primary" onClick={() => void run()}>
+            <Icon name="upload" size={17} />{finished ? 'Postar de novo' : `Postar ${rows.length} vídeo(s)`}
           </button>
-          {!busy && <button onClick={() => setRows([])}>Limpar</button>}
+          <button onClick={() => { setRows([]); setLog([]); setStartedAt(null); }}>Limpar</button>
+          <span className="muted">{mb(totalBytes)} para enviar.</span>
         </div>
       )}
     </div>
   );
 }
 
+function Counter({ text, net, field }: { text: string; net: Net; field: 'title' | 'description' }) {
+  const rule = (RULES as any)[net]?.[field];
+  if (!rule) return null;
+  const n = [...text].length;
+  return <span className={n > rule.max ? 'counter over' : n > rule.max * 0.9 ? 'counter near' : 'counter'}>{n}/{rule.max}</span>;
+}
+
+function DirectCard(props: {
+  row: Row; index: number; total: number; when: Date; nets: Record<Net, boolean>; busy: boolean;
+  onMove: (d: -1 | 1) => void; onRemove: () => void;
+  onText: (net: Net, p: Partial<{ title: string; description: string }>) => void;
+  onCover: (f: File) => void; onMeta: (duration: number, dims: string) => void;
+}) {
+  const { row, index, total, when, nets, busy } = props;
+  const enabled = NETS.filter((n) => nets[n.id]).map((n) => n.id);
+  const [tab, setTab] = useState<Net>(enabled[0] ?? 'youtube');
+  const cur = enabled.includes(tab) ? tab : enabled[0];
+  const coverInput = useRef<HTMLInputElement>(null);
+  return (
+    <article className="video-card" aria-label={`Vídeo ${index + 1}: ${row.name}`}>
+      <div className="card-head">
+        <span className="order">#{index + 1}</span>
+        <span className="when"><strong>{fmtDate(when)}</strong> <small>(seu horário)</small></span>
+        <span className="spacer" />
+        {!busy && <>
+          <button className="small" onClick={() => props.onMove(-1)} disabled={index === 0}>↑ Subir</button>
+          <button className="small" onClick={() => props.onMove(1)} disabled={index === total - 1}>↓ Descer</button>
+          <button className="small danger" onClick={props.onRemove}>Excluir</button>
+        </>}
+      </div>
+      <div className="card-body">
+        <div className="media-col">
+          <video className="preview" src={row.videoUrl} controls muted preload="metadata" playsInline
+            onLoadedMetadata={(e) => props.onMeta(e.currentTarget.duration, `${e.currentTarget.videoWidth}×${e.currentTarget.videoHeight}`)} />
+          <dl className="meta">
+            <dt>Pasta / arquivo</dt><dd title={row.video.name}>{row.name}</dd>
+            <dt>Duração</dt><dd>{row.duration ? fmtTime(row.duration) : '…'}</dd>
+            <dt>Tamanho</dt><dd>{row.dims ? `${row.dims} · ` : ''}{mb(row.video.size)}</dd>
+          </dl>
+          <section className="cover">
+            <h4>Thumbnail / capa</h4>
+            {row.coverUrl ? (
+              <div className="cover-preview">
+                <img src={row.coverUrl} alt="Capa" />
+                <div>
+                  <small>{row.cover?.name}</small>
+                  {!busy && <div className="row"><button className="small" onClick={() => coverInput.current?.click()}>Trocar</button></div>}
+                </div>
+              </div>
+            ) : (
+              <button className="cover-upload-button" disabled={busy} onClick={() => coverInput.current?.click()}>
+                <span>+ Adicionar thumbnail</span><small>Imagem JPG</small>
+              </button>
+            )}
+            <input ref={coverInput} type="file" accept="image/jpeg" hidden onChange={(e) => e.target.files?.[0] && props.onCover(e.target.files[0])} />
+          </section>
+          {Object.keys(row.state).length > 0 && (
+            <ul className="cover-results">
+              {NETS.filter((n) => row.state[n.id]).map((n) => {
+                const st = row.state[n.id]!;
+                const p = Math.min(100, Math.round((st.sent / row.video.size) * 100));
+                return (
+                  <li key={n.id} style={{ display: 'block', marginBottom: 8 }}>
+                    <span className={`dot ${n.id}`} /> <strong>{n.label}:</strong> {PHASE_LABEL[st.phase]}
+                    {st.phase === 'scheduled' && <> para {fmtDate(when)}</>}
+                    {st.phase === 'sending' && <> · {p}% ({mb(Math.min(st.sent, row.video.size))} de {mb(row.video.size)})</>}
+                    {st.url && <> · <a href={st.url} target="_blank" rel="noreferrer">abrir</a></>}
+                    {st.phase === 'sending' && <progress max={100} value={p} style={{ width: '100%' }} />}
+                    {st.step && <div className="muted" style={{ fontSize: 12 }}>{st.step}</div>}
+                    {st.note && <div className="muted" style={{ fontSize: 12 }}>{st.note}</div>}
+                    {st.error && <div className="field-error">{st.error}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <div className="texts-col">
+          <div className="ptabs" role="tablist" style={{ '--segment': Math.max(0, enabled.indexOf(cur)), '--segments': Math.max(1, enabled.length) } as CSSProperties}>
+            {enabled.map((n) => (
+              <button key={n} role="tab" aria-selected={cur === n} className={cur === n ? `ptab ${n} active` : `ptab ${n}`} onClick={() => setTab(n)}>
+                {NET_LABEL[n]}
+              </button>
+            ))}
+          </div>
+          {cur && (
+            <div className="ptab-panel" role="tabpanel">
+              <div className="editor-context"><strong>{row.name}</strong><span>{NET_LABEL[cur]}</span></div>
+              {cur !== 'instagram' && (
+                <div className="field">
+                  <label>Título {cur === 'youtube' && <span className="req">*</span>}<Counter text={row.texts[cur].title} net={cur} field="title" /></label>
+                  <input value={row.texts[cur].title} disabled={busy} onChange={(e) => props.onText(cur, { title: e.target.value })} />
+                </div>
+              )}
+              <div className="field">
+                <label>{cur === 'instagram' ? 'Legenda' : 'Descrição'}<Counter text={row.texts[cur].description} net={cur} field="description" /></label>
+                <textarea rows={9} value={row.texts[cur].description} disabled={busy} onChange={(e) => props.onText(cur, { description: e.target.value })} />
+              </div>
+              {cur === 'facebook' && nets.instagram && <p className="field-hint">O Instagram usa o vídeo enviado ao Facebook.</p>}
+              {cur === 'instagram' && <p className="field-hint">O Instagram publica na hora do envio (a API não permite agendar).</p>}
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 const STATUS_LABEL: Record<PostRecord['status'], string> = {
-  sending: 'Enviando / interrompido', scheduled: 'Agendado', published: 'Publicado', failed: 'Falhou',
+  sending: 'Interrompido', scheduled: 'Agendado', published: 'Publicado', failed: 'Falhou',
 };
-const NET_LABEL: Record<Platform, string> = { youtube: 'YouTube', facebook: 'Facebook', instagram: 'Instagram', tiktok: 'TikTok' };
 
 export function PostHistory() {
   const [posts, setPosts] = useState<PostRecord[] | null>(null);
@@ -260,7 +477,7 @@ export function PostHistory() {
                 <tr key={p.id}>
                   <td><strong>{NET_LABEL[p.platform]}</strong></td>
                   <td>{STATUS_LABEL[p.status]}{p.error ? ` — ${p.error}` : ''}</td>
-                  <td>{p.publishAt ? new Date(p.publishAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''}</td>
+                  <td>{p.publishAt ? fmtDate(new Date(p.publishAt)) : ''}</td>
                   <td>{p.url ? <a href={p.url} target="_blank" rel="noreferrer">abrir</a> : ''}</td>
                   <td><button className="link" onClick={() => { if (confirm('Apagar este registro do histórico? (não apaga da rede)')) void directApi.deletePost(p.id).then(load); }}>apagar</button></td>
                 </tr>

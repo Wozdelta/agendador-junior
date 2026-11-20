@@ -10,7 +10,9 @@ export interface DirectSession {
   errors: Partial<Record<Platform, string>>;
 }
 
-type Progress = (pct: number) => void;
+/** Bytes já enviados deste arquivo. */
+type Progress = (sentBytes: number) => void;
+export type Step = (msg: string) => void;
 
 async function json<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -40,7 +42,7 @@ function xhr(method: string, url: string, body: Blob | FormData, headers: Record
     const x = new XMLHttpRequest();
     x.open(method, url);
     for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
-    if (onProgress) x.upload.onprogress = (e) => e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));
+    if (onProgress) x.upload.onprogress = (e) => onProgress(e.loaded);
     x.onload = () => {
       let j: any = null;
       try { j = JSON.parse(x.responseText); } catch {}
@@ -56,11 +58,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // ---------------- YouTube ----------------
 export async function uploadYouTube(
   s: DirectSession, video: File, cover: File | undefined,
-  meta: { title: string; description: string; publishAt?: Date }, onProgress: Progress,
+  meta: { title: string; description: string; publishAt?: Date }, onProgress: Progress, step: Step = () => {},
 ): Promise<{ id: string; url: string; note?: string }> {
   const token = s.youtube?.accessToken;
   if (!token) throw new Error(s.errors.youtube ?? 'YouTube não conectado.');
   const future = meta.publishAt && meta.publishAt.getTime() > Date.now() + 60_000;
+  step('Pedindo autorização de envio ao YouTube…');
   const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
     method: 'POST',
     headers: {
@@ -82,11 +85,13 @@ export async function uploadYouTube(
   }
   const location = init.headers.get('Location');
   if (!location) throw new Error('YouTube não devolveu o endereço de envio.');
+  step('Enviando o vídeo ao YouTube…');
   const up = await xhr('PUT', location, video, { 'Content-Type': video.type || 'video/mp4' }, onProgress);
   if (up.status !== 200 && up.status !== 201) throw new Error(`YouTube: envio falhou (${up.json?.error?.message ?? up.status}).`);
   const id = up.json.id as string;
   let note: string | undefined;
   if (cover) {
+    step('Aplicando a capa no YouTube…');
     const t = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${id}`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/jpeg' }, body: cover,
     });
@@ -103,20 +108,26 @@ const CHUNK = 8 * 1024 * 1024;
 
 export async function uploadFacebook(
   s: DirectSession, video: File, cover: File | undefined,
-  meta: { title: string; description: string; publishAt?: Date; hidden?: boolean }, onProgress: Progress,
+  meta: { title: string; description: string; publishAt?: Date; hidden?: boolean }, onProgress: Progress, step: Step = () => {},
 ): Promise<{ id: string; url?: string }> {
   const fb = s.facebook;
   if (!fb) throw new Error(s.errors.facebook ?? 'Facebook não conectado.');
   const endpoint = `https://graph-video.facebook.com/${s.graphVersion}/${fb.pageId}/videos`;
   const post = async (fields: Record<string, string | Blob>, progress?: Progress) => {
+    const phase = String(fields.upload_phase);
     const f = new FormData();
     f.set('access_token', fb.pageToken);
     for (const [k, v] of Object.entries(fields)) f.set(k, v);
     const r = await xhr('POST', endpoint, f, {}, progress);
-    if (r.status !== 200 || r.json?.error) throw new Error(`Facebook: ${r.json?.error?.error_user_msg ?? r.json?.error?.message ?? `HTTP ${r.status}`}`);
+    if (r.status !== 200 || r.json?.error) {
+      const e = r.json?.error;
+      throw new Error(`Facebook (etapa ${phase}): ${e?.error_user_msg ?? e?.message ?? `HTTP ${r.status}`}${e?.code ? ` [código ${e.code}${e.error_subcode ? `/${e.error_subcode}` : ''}]` : ''}`);
+    }
     return r.json;
   };
+  step(`Abrindo envio na Página ${fb.pageName}…`);
   const start = await post({ upload_phase: 'start', file_size: String(video.size) });
+  step('Enviando o vídeo ao Facebook…');
   const session = start.upload_session_id as string;
   const videoId = String(start.video_id);
   let from = Number(start.start_offset), to = Number(start.end_offset);
@@ -124,7 +135,7 @@ export async function uploadFacebook(
     const base = from;
     const r = await post(
       { upload_phase: 'transfer', upload_session_id: session, start_offset: String(from), video_file_chunk: video.slice(from, Math.min(to, from + CHUNK)) },
-      (pct) => onProgress(Math.round(((base + (pct / 100) * (to - base)) / video.size) * 100)),
+      (sent) => onProgress(base + sent),
     );
     from = Number(r.start_offset); to = Number(r.end_offset);
   }
@@ -133,8 +144,9 @@ export async function uploadFacebook(
   if (meta.hidden) { finish.published = 'false'; }
   else if (future) { finish.published = 'false'; finish.scheduled_publish_time = String(Math.floor(meta.publishAt!.getTime() / 1000)); }
   if (cover) finish.thumb = cover;
+  step(meta.hidden ? 'Finalizando (vídeo oculto, só para o Instagram)…' : future ? 'Finalizando e agendando no Facebook…' : 'Finalizando e publicando no Facebook…');
   await post(finish);
-  onProgress(100);
+  onProgress(video.size);
   return { id: videoId, url: meta.hidden ? undefined : `https://www.facebook.com/${fb.pageId}/videos/${videoId}` };
 }
 

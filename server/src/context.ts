@@ -112,7 +112,9 @@ async function createMode(mode: AppMode, root: string, f: Factory, lazy = false,
     idem: await ready(new JsonCollection<IdemRecord>(f.col(mode, 'idempotency'))),
     connections: await ready(new JsonDoc<ConnectionsDoc>(f.doc(mode, 'connections'), {})),
     demo: await ready(new JsonDoc<DemoDoc>(f.doc(mode, 'demo-remote'), { faults: {}, remote: {} })),
-    posts: await ready(new JsonCollection<PostRecord>(f.col(mode, 'posts'))),
+    // O banco só aceita nomes fixos de coleção; ('demo','manual') nunca é usada pela agenda manual
+    // (que grava em 'real'), então guarda o histórico do envio direto sem exigir migração SQL.
+    posts: await ready(new JsonCollection<PostRecord>(f.col('demo', mode === 'real' ? 'manual' : 'posts-demo'))),
   };
 }
 
