@@ -95,6 +95,9 @@ export function DirectPost() {
   const [start, setStart] = useState(defaultStart);
   const [everyDays, setEveryDays] = useState(1);
   const [busy, setBusy] = useState(false);
+  // Fila: datas fixadas no início do envio e o vídeo em que a fila parou (falhou).
+  const plan = useRef(new Map<string, Date>());
+  const [stuck, setStuck] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const [log, setLog] = useState<LogLine[]>([]);
@@ -173,17 +176,22 @@ export function DirectPost() {
     return c;
   }, [rows, nets]);
 
-  const run = async (onlyKey?: string) => {
+  /** Envia em fila, um vídeo por vez. `fromKey` continua a fila a partir daquele vídeo. */
+  const run = async (fromKey?: string, list: Row[] = rows) => {
     setError(null);
-    const todo = onlyKey ? rows.filter((r) => r.key === onlyKey) : rows;
+    const start = fromKey ? Math.max(0, list.findIndex((r) => r.key === fromKey)) : 0;
+    const todo = list.slice(start);
+    if (!todo.length) { setStuck(null); return; }
+    if (!fromKey) plan.current = new Map(list.map((r, i) => [r.key, dateFor(i)]));
     if (!rows.length) return setError('Adicione pelo menos um vídeo.');
     if (!nets.youtube && !nets.facebook && !nets.instagram) return setError('Escolha pelo menos uma rede.');
-    const repeated = onlyKey ? [] : rows.filter((r) => r.posted?.length);
+    const repeated = fromKey ? [] : rows.filter((r) => r.posted?.length);
     if (repeated.length && !confirm(`${repeated.length} vídeo(s) já foram programados ou postados antes:\n\n${repeated.map((r) => `• ${r.name}`).join('\n')}\n\nPostar de novo mesmo assim? (Cancelar para revisar; use Excluir nos cartões marcados.)`)) return;
     const missing = rows.find((r) => nets.youtube && !r.texts.youtube.title.trim());
     if (missing) return setError(`"${missing.name}": o YouTube exige título.`);
     setBusy(true);
-    setLog([]);
+    setStuck(null);
+    if (!fromKey) setLog([]);
     setStartedAt(Date.now());
     for (const r of todo) setRows((x) => x.map((y) => (y.key === r.key ? { ...y, state: Object.fromEntries(NETS.filter((n) => nets[n.id]).map((n) => [n.id, { phase: 'waiting', sent: 0 }])) } : y)));
     try {
@@ -192,11 +200,11 @@ export function DirectPost() {
       for (const n of NETS) if (nets[n.id] && s.errors[n.id]) throw new Error(`${n.label}: ${s.errors[n.id]}`);
       say(`Contas ok${s.facebook ? ` · Página "${s.facebook.pageName}"` : ''}${s.instagram ? ` · Instagram @${s.instagram.username}` : ''}.`, 'ok');
 
+      let stopped = false;
       for (const row of todo) {
-        const i = rows.indexOf(row);
-        const when = dateFor(i);
+        const when = plan.current.get(row.key) ?? dateFor(list.indexOf(row));
         const tag = `[${todo.indexOf(row) + 1}/${todo.length}] ${row.name}`;
-        const thumb = await makeThumb(row.coverUrl ?? row.videoUrl, !row.coverUrl);
+        const thumb = await makeThumb(row.coverUrl ?? row.videoUrl, !row.coverUrl).catch(() => undefined);
         const recId = (platform: Platform) => `${platform}-${row.key}`;
         const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
           directApi.savePost({ id: recId(platform), platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
@@ -267,16 +275,16 @@ export function DirectPost() {
             }
           }
           await directApi.deletePost(recId(failed)).catch(() => undefined);
-          say(`${tag}: não foi postado. Use "Tentar de novo" no cartão.`, 'error');
+          say(`${tag}: não foi postado. A fila parou aqui — no cartão, escolha "Tentar de novo" ou "Ignorar".`, 'error');
+          setStuck(row.key);
+          stopped = true;
+          break;
         }
+        // Deu certo nas redes escolhidas: sai do rascunho (está no Histórico) e segue para o próximo.
+        say(`${tag}: pronto nas redes escolhidas ✔ — saiu do rascunho.`, 'ok');
+        setRows((x) => x.filter((r) => r.key !== row.key));
       }
-      // Vídeo que deu certo em todas as redes sai do rascunho; os que falharam ficam para tentar de novo.
-      const okPhases = ['scheduled', 'published'];
-      setRows((x) => x.filter((r) => {
-        const ok = NETS.filter((n) => nets[n.id]).every((n) => okPhases.includes(r.state[n.id]?.phase ?? ''));
-        return !ok;
-      }));
-      say('Terminado. Os vídeos enviados com sucesso saíram do rascunho (veja na aba Histórico); os que falharam continuam aqui.', 'ok');
+      if (!stopped) say('Terminado. Todos os vídeos foram enviados (veja na aba Histórico).', 'ok');
     } catch (e: any) {
       setError(e.message);
       say(`Parado: ${e.message}`, 'error');
@@ -402,10 +410,19 @@ export function DirectPost() {
       {rows.length > 0 && (
         <section className="items">
           {rows.map((r, i) => (
-            <DirectCard key={r.key} row={r} index={i} total={rows.length} when={dateFor(i)} nets={nets} busy={busy}
+            <DirectCard key={r.key} row={r} index={i} total={rows.length} when={(stuck || busy) && plan.current.get(r.key) ? plan.current.get(r.key)! : dateFor(i)} nets={nets} busy={busy}
               onMove={(d) => move(i, d)}
               onRemove={() => setRows(rows.filter((x) => x.key !== r.key))}
+              stuck={stuck === r.key}
               onRetry={() => void run(r.key)}
+              onIgnore={() => {
+                if (!confirm(`Ignorar "${r.name}"? Ele sai do rascunho (o que tinha subido já foi apagado das redes) e a fila segue para o próximo.`)) return;
+                const rest = rows.filter((x) => x.key !== r.key);
+                const next = rest[rows.indexOf(r)];
+                setRows(rest);
+                setStuck(null);
+                if (next) void run(next.key, rest);
+              }}
               onText={(net, p) => patchRow(r.key, (x) => ({ ...x, texts: { ...x.texts, [net]: { ...x.texts[net], ...p } } }))}
               onCover={(file) => patchRow(r.key, (x) => ({ ...x, cover: file, coverUrl: URL.createObjectURL(file) }))}
               onMeta={(duration, dims) => patchRow(r.key, (x) => ({ ...x, duration, dims }))}
@@ -436,7 +453,7 @@ function Counter({ text, net, field }: { text: string; net: Net; field: 'title' 
 
 function DirectCard(props: {
   row: Row; index: number; total: number; when: Date; nets: Record<Net, boolean>; busy: boolean;
-  onMove: (d: -1 | 1) => void; onRemove: () => void; onRetry: () => void;
+  onMove: (d: -1 | 1) => void; onRemove: () => void; onRetry: () => void; onIgnore: () => void; stuck: boolean;
   onText: (net: Net, p: Partial<{ title: string; description: string }>) => void;
   onCover: (f: File) => void; onMeta: (duration: number, dims: string) => void;
 }) {
@@ -508,10 +525,13 @@ function DirectCard(props: {
               })}
             </ul>
           )}
-          {!busy && Object.values(row.state).some((st) => st?.phase === 'failed') && (
-            <button className="primary" style={{ width: '100%', marginTop: 8 }} onClick={props.onRetry}>
-              <Icon name="upload" size={16} />Tentar de novo
-            </button>
+          {!busy && (props.stuck || Object.values(row.state).some((st) => st?.phase === 'failed')) && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button className="primary" style={{ flex: 1 }} onClick={props.onRetry}>
+                <Icon name="upload" size={16} />Tentar de novo
+              </button>
+              <button className="danger" style={{ flex: 1 }} onClick={props.onIgnore}>Ignorar</button>
+            </div>
           )}
         </div>
         <div className="texts-col">
