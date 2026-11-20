@@ -2,7 +2,7 @@
 // O servidor só entrega os tokens ao administrador logado, publica o Instagram a partir
 // do link do vídeo já enviado ao Facebook e guarda o histórico (vídeo, rede, data, link).
 import crypto from 'node:crypto';
-import { Router } from 'express';
+import express, { Router } from 'express';
 import type { AppContext } from '../context.js';
 import { AppError } from '../lib/errors.js';
 import { graph, selectedPage } from '../platforms/meta.js';
@@ -57,6 +57,35 @@ export function directRoutes(ctx: AppContext): Router {
       params: { media_type: 'REELS', video_url: v.source, caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
     });
     res.json({ state: 'processing', containerId: c.id });
+  }));
+
+  /** Instagram por envio direto: cria o Reel vazio e recebe o vídeo em pedaços (nada fica guardado). */
+  r.post('/direct/instagram/create', ah(async (req, res) => {
+    await mc().connections.refresh();
+    const page = selectedPage(ctx, mc());
+    if (!page.instagram) throw new AppError(409, 'A Página escolhida não tem Instagram profissional vinculado.');
+    const c = await graph(ctx, `/${page.instagram.id}/media`, {
+      method: 'POST', token: page.token, what: 'Criação do Reel',
+      params: { media_type: 'REELS', upload_type: 'resumable', caption: str(req.body?.caption, 2200) ?? '', share_to_feed: true },
+    });
+    res.json({ containerId: c.id });
+  }));
+
+  r.post('/direct/instagram/chunk/:id', express.raw({ type: 'application/octet-stream', limit: '5mb' }), ah(async (req, res) => {
+    const id = String(req.params.id);
+    const offset = Number(req.query.offset), size = Number(req.query.size);
+    if (!/^\d+$/.test(id) || !Number.isFinite(offset) || !Number.isFinite(size) || !Buffer.isBuffer(req.body)) throw new AppError(400, 'Pedaço do vídeo inválido.');
+    await mc().connections.refresh();
+    const page = selectedPage(ctx, mc());
+    const up = await ctx.fetch(`https://rupload.facebook.com/ig-api-upload/${ctx.config.meta.graphVersion}/${id}`, {
+      method: 'POST',
+      headers: { Authorization: `OAuth ${page.token}`, offset: String(offset), file_size: String(size), 'Content-Type': 'application/octet-stream' },
+      body: new Uint8Array(req.body as Buffer),
+    });
+    const txt = await up.text();
+    // 206 = pedaço recebido, faltam outros; 200 = arquivo completo.
+    if (up.status !== 200 && up.status !== 206) throw new AppError(502, `O Instagram recusou o envio do vídeo (${up.status}): ${txt.slice(0, 300)}`);
+    res.json({ ok: true, done: up.status === 200 });
   }));
 
   r.post('/direct/instagram/check', ah(async (req, res) => {

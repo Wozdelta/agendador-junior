@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Platform, PostRecord } from '../../../server/src/shared/types';
 import { RULES } from '../../../server/src/shared/limits';
 import { buildGroups, filesFromDrop, filesFromInput, type ImportGroup } from '../lib/folder-import';
-import { directApi, publishInstagram, uploadFacebook, uploadYouTube } from '../lib/direct-upload';
+import { directApi, uploadFacebook, uploadInstagram, uploadYouTube } from '../lib/direct-upload';
 import { Icon } from './ui/Icon';
 import '../post.css';
 
@@ -154,10 +154,10 @@ export function DirectPost() {
 
   // Total de bytes a enviar: cada vídeo vai uma vez ao YouTube e uma vez ao Facebook
   // (o Instagram reaproveita o envio do Facebook).
-  const uploadsPerVideo = (nets.youtube ? 1 : 0) + (nets.facebook || nets.instagram ? 1 : 0);
+  const uploadsPerVideo = (nets.youtube ? 1 : 0) + (nets.facebook ? 1 : 0) + (nets.instagram ? 1 : 0);
   const totalBytes = rows.reduce((s, r) => s + r.video.size * uploadsPerVideo, 0);
   const sentBytes = rows.reduce((s, r) => s + Math.min(r.state.youtube?.sent ?? 0, r.video.size)
-    + Math.min(Math.max(r.state.facebook?.sent ?? 0, nets.facebook ? 0 : r.state.instagram?.sent ?? 0), r.video.size), 0);
+    + Math.min(r.state.facebook?.sent ?? 0, r.video.size) + Math.min(r.state.instagram?.sent ?? 0, r.video.size), 0);
   const elapsed = startedAt ? (now - startedAt) / 1000 : 0;
   const speed = elapsed > 2 ? sentBytes / elapsed : 0;
   const eta = speed > 0 ? (totalBytes - sentBytes) / speed : NaN;
@@ -220,8 +220,8 @@ export function DirectPost() {
         }
 
         let fbId: string | undefined;
-        if (nets.facebook || nets.instagram) {
-          const hidden = !nets.facebook; // só como ponte para o Instagram
+        if (nets.facebook) {
+          const hidden = false;
           const net: Net = hidden ? 'instagram' : 'facebook';
           const t = row.texts.facebook;
           try {
@@ -241,19 +241,17 @@ export function DirectPost() {
             setNet(row.key, net, { phase: 'failed', error: e.message, step: undefined });
             say(`${tag} → Facebook falhou: ${e.message}`, 'error');
             if (!hidden) await record('facebook', 'failed', { error: e.message });
-            if (nets.instagram) {
-              if (!hidden) setNet(row.key, 'instagram', { phase: 'skipped', error: 'Depende do envio ao Facebook, que falhou.' });
-              await record('instagram', 'failed', { error: 'O envio ao Facebook falhou; o Instagram usa esse vídeo.' });
-            }
           }
         }
 
-        if (nets.instagram && fbId) {
+        void fbId;
+        if (nets.instagram) {
           try {
-            say(`${tag} → Instagram: aguardando o Facebook processar para publicar o Reel.`);
-            setNet(row.key, 'instagram', { phase: 'processing', sent: row.video.size, step: 'Aguardando o Facebook processar…' });
+            say(`${tag} → Instagram: enviando o vídeo (${(row.video.size / 1048576).toFixed(1)} MB).`);
+            setNet(row.key, 'instagram', { phase: 'sending', step: 'Iniciando…' });
             await record('instagram', 'sending', { title: row.texts.instagram.description.split('\n')[0] });
-            const r = await publishInstagram(fbId, row.texts.instagram.description, !nets.facebook, (step) => setNet(row.key, 'instagram', { step }));
+            const r = await uploadInstagram(row.video, row.texts.instagram.description,
+              (sent) => setNet(row.key, 'instagram', { sent }), (step) => setNet(row.key, 'instagram', { step }));
             setNet(row.key, 'instagram', { phase: 'published', step: undefined, url: r.url });
             say(`${tag} → Instagram: publicado agora.`, 'ok');
             await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });

@@ -38,6 +38,7 @@ export const directApi = {
   deletePost: (id: string, remote = false) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}${remote ? '?remote=1' : ''}`),
   igStart: (facebookVideoId: string, caption: string) =>
     json<{ state: 'waiting' | 'processing'; containerId?: string; fbStatus?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
+  igCreate: (caption: string) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption }),
   igCheck: (containerId: string, deleteFacebookVideoId?: string) =>
     json<{ state: 'processing' | 'published' | 'failed'; id?: string; url?: string; error?: string }>('POST', '/api/direct/instagram/check', { containerId, deleteFacebookVideoId }),
 };
@@ -157,6 +158,40 @@ export async function uploadFacebook(
 }
 
 // ---------------- Instagram (agora) ----------------
+/** Instagram: o vídeo vai em pedaços de 4 MB pelo nosso servidor direto para o Instagram. */
+export async function uploadInstagram(video: File, caption: string, onProgress: Progress, onStatus: (msg: string) => void) {
+  const CHUNK = 4 * 1024 * 1024;
+  let lastError = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const tries = attempt > 1 ? ` (tentativa ${attempt} de 3)` : '';
+    onStatus(`Criando o Reel${tries}…`);
+    const { containerId } = await directApi.igCreate(caption);
+    for (let off = 0; off < video.size; off += CHUNK) {
+      onStatus(`Enviando vídeo ao Instagram${tries}…`);
+      const part = video.slice(off, Math.min(off + CHUNK, video.size));
+      let ok = false;
+      for (let k = 0; k < 3 && !ok; k++) {
+        const r = await xhr('POST', `/api/direct/instagram/chunk/${containerId}?offset=${off}&size=${video.size}`, part,
+          { 'Content-Type': 'application/octet-stream' }, (n) => onProgress(off + n));
+        if (r.status === 200) ok = true;
+        else { lastError = r.json?.error?.message ?? r.json?.message ?? `Erro ${r.status} ao enviar pedaço do vídeo.`; await sleep(3000); }
+      }
+      if (!ok) throw new Error(lastError);
+    }
+    onProgress(video.size);
+    const deadline = Date.now() + 15 * 60_000;
+    for (;;) {
+      if (Date.now() > deadline) throw new Error('O Instagram demorou demais para processar o vídeo.');
+      onStatus(`Instagram processando o Reel${tries}…`);
+      await sleep(5000);
+      const r = await directApi.igCheck(containerId);
+      if (r.state === 'published') return r;
+      if (r.state === 'failed') { lastError = r.error || 'O Instagram não processou o vídeo.'; break; }
+    }
+  }
+  throw new Error(lastError);
+}
+
 export async function publishInstagram(facebookVideoId: string, caption: string, deleteCarrier: boolean, onStatus: (msg: string) => void) {
   const deadline = Date.now() + 20 * 60_000;
   let lastError = '';
