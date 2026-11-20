@@ -35,7 +35,7 @@ export const directApi = {
     saveQueue = run.catch(() => undefined);
     return run;
   },
-  deletePost: (id: string, remote = false) => json<{ ok: true }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}${remote ? '?remote=1' : ''}`),
+  deletePost: (id: string, remote = false) => json<{ ok: true; warning?: string }>('DELETE', `/api/direct/posts/${encodeURIComponent(id)}${remote ? '?remote=1' : ''}`),
   igStart: (facebookVideoId: string, caption: string) =>
     json<{ state: 'waiting' | 'processing'; containerId?: string; fbStatus?: string }>('POST', '/api/direct/instagram/start', { facebookVideoId, caption }),
   igCreate: (caption: string) => json<{ containerId: string }>('POST', '/api/direct/instagram/create', { caption }),

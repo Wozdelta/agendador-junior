@@ -113,13 +113,13 @@ export function PostHistory() {
   const removeVideo = async (g: VideoGroup) => {
     if (!confirm(`Apagar "${g.title}" de TODAS as redes (${g.posts.map((p) => NET_LABEL[p.platform]).join(', ')}) e do histórico?\n\nNão dá para desfazer.`)) return;
     const errs: string[] = [];
-    for (const p of g.posts) await directApi.deletePost(p.id, true).catch((e) => errs.push(`${NET_LABEL[p.platform]}: ${e.message}`));
+    for (const p of g.posts) await directApi.deletePost(p.id, true).then((r) => { if (r.warning) errs.push(r.warning); }, (e) => errs.push(`${NET_LABEL[p.platform]}: ${e.message}`));
     setError(errs.length ? errs.join(' · ') : null);
     void load();
   };
   const remove = async (p: PostRecord) => {
     if (!confirm(`Apagar este vídeo do ${NET_LABEL[p.platform]} e do histórico?\n\nNão dá para desfazer.`)) return;
-    const err = await directApi.deletePost(p.id, true).then(() => null, (e) => e.message as string);
+    const err = await directApi.deletePost(p.id, true).then((r) => r.warning ?? null, (e) => e.message as string);
     setError(err ? `${NET_LABEL[p.platform]}: ${err}` : null);
     void load();
   };

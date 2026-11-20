@@ -148,23 +148,27 @@ export function directRoutes(ctx: AppContext): Router {
   r.delete('/direct/posts/:id', ah(async (req, res) => {
     await mc().posts.refresh();
     const rec = mc().posts.all().find((x) => x.id === req.params.id);
+    let warning: string | undefined;
     if (rec?.remoteId && rec.status !== 'failed' && req.query.remote === '1') {
       // Apaga também na rede. Se a rede recusar, mantém o registro e mostra o motivo.
       if (rec.platform === 'youtube') {
         const token = await new YouTubeAdapter(ctx).token({ ctx, mc: mc() });
         const r2 = await ctx.fetch(`https://www.googleapis.com/youtube/v3/videos?id=${encodeURIComponent(rec.remoteId)}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
         if (!r2.ok && r2.status !== 404) throw new AppError(502, `O YouTube recusou apagar o vídeo (${r2.status}): ${(await r2.text()).slice(0, 300)}`);
-      } else if (rec.platform === 'facebook' || rec.platform === 'instagram') {
+      } else if (rec.platform === 'instagram') {
+        // A API do Instagram não permite apagar Reels; só pelo aplicativo.
+        warning = 'O Instagram não deixa apagar Reels por fora do aplicativo. Saiu do histórico; apague no app do Instagram.';
+      } else if (rec.platform === 'facebook') {
         const page = selectedPage(ctx, mc());
         try {
-          await graph(ctx, `/${rec.remoteId}`, { method: 'DELETE', token: page.token, what: rec.platform === 'facebook' ? 'Remoção do vídeo no Facebook' : 'Remoção do Reel no Instagram' });
+          await graph(ctx, `/${rec.remoteId}`, { method: 'DELETE', token: page.token, what: 'Remoção do vídeo no Facebook' });
         } catch (e: any) {
-          if (!/does not exist|cannot be loaded/i.test(e.message)) throw new AppError(502, `${rec.platform === 'facebook' ? 'O Facebook' : 'O Instagram'} recusou apagar: ${e.message}`);
+          if (!/does not exist|cannot be loaded/i.test(e.message)) throw new AppError(502, `O Facebook recusou apagar: ${e.message}`);
         }
       }
     }
     await mc().posts.mutate((d) => { const i = d.findIndex((x) => x.id === req.params.id); if (i >= 0) d.splice(i, 1); });
-    res.json({ ok: true });
+    res.json({ ok: true, warning });
   }));
   return r;
 }
