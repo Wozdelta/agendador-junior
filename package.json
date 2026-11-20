@@ -17,7 +17,8 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc -p api/tsconfig.json"
   },
   "devDependencies": {
-    "concurrently": "^9.2.5"
+    "concurrently": "^9.2.5",
+    "@types/node": "^26.6.6"
   },
   "engines": {
     "node": ">=24"
