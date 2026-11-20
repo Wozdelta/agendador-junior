@@ -170,12 +170,17 @@ export async function uploadInstagram(video: File, caption: string, onProgress: 
   const { path, uploadUrl } = await directApi.igStage();
   try {
     onStatus('Enviando vídeo ao Instagram…');
-    let up = await xhr('PUT', uploadUrl, video, { 'Content-Type': video.type || 'video/mp4', 'x-upsert': 'true' }, onProgress);
-    if (up.status >= 300) {
-      await sleep(3000);
-      up = await xhr('PUT', uploadUrl, video, { 'Content-Type': video.type || 'video/mp4', 'x-upsert': 'true' }, onProgress);
+    let up: { status: number; json: any } = { status: 0, json: null };
+    for (let k = 1; k <= 3; k++) {
+      try {
+        up = await xhr('PUT', uploadUrl, video, { 'Content-Type': video.type || 'video/mp4', 'x-upsert': 'true' }, onProgress);
+        if (up.status < 300) break;
+      } catch (e: any) {
+        up = { status: 0, json: { message: e.message } };
+      }
+      if (k < 3) { onStatus(`Conexão caiu no envio ao Instagram — tentando de novo (${k + 1} de 3)…`); await sleep(4000); }
     }
-    if (up.status >= 300) throw new Error(`Envio ao Instagram falhou (${up.status}): ${up.json?.message ?? up.json?.error ?? 'sem detalhe'}`);
+    if (up.status === 0 || up.status >= 300) throw new Error(`Envio ao Instagram falhou (${up.status}): ${up.json?.message ?? up.json?.error ?? 'sem detalhe'}`);
     onProgress(video.size);
     let lastError = '';
     for (let attempt = 1; attempt <= 3; attempt++) {

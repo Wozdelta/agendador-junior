@@ -173,93 +173,101 @@ export function DirectPost() {
     return c;
   }, [rows, nets]);
 
-  const run = async () => {
+  const run = async (onlyKey?: string) => {
     setError(null);
+    const todo = onlyKey ? rows.filter((r) => r.key === onlyKey) : rows;
     if (!rows.length) return setError('Adicione pelo menos um vídeo.');
     if (!nets.youtube && !nets.facebook && !nets.instagram) return setError('Escolha pelo menos uma rede.');
-    const repeated = rows.filter((r) => r.posted?.length);
+    const repeated = onlyKey ? [] : rows.filter((r) => r.posted?.length);
     if (repeated.length && !confirm(`${repeated.length} vídeo(s) já foram programados ou postados antes:\n\n${repeated.map((r) => `• ${r.name}`).join('\n')}\n\nPostar de novo mesmo assim? (Cancelar para revisar; use Excluir nos cartões marcados.)`)) return;
     const missing = rows.find((r) => nets.youtube && !r.texts.youtube.title.trim());
     if (missing) return setError(`"${missing.name}": o YouTube exige título.`);
     setBusy(true);
     setLog([]);
     setStartedAt(Date.now());
-    for (const r of rows) setRows((x) => x.map((y) => (y.key === r.key ? { ...y, state: Object.fromEntries(NETS.filter((n) => nets[n.id]).map((n) => [n.id, { phase: 'waiting', sent: 0 }])) } : y)));
+    for (const r of todo) setRows((x) => x.map((y) => (y.key === r.key ? { ...y, state: Object.fromEntries(NETS.filter((n) => nets[n.id]).map((n) => [n.id, { phase: 'waiting', sent: 0 }])) } : y)));
     try {
       say('Conferindo as contas conectadas…');
       const s = await directApi.session();
       for (const n of NETS) if (nets[n.id] && s.errors[n.id]) throw new Error(`${n.label}: ${s.errors[n.id]}`);
       say(`Contas ok${s.facebook ? ` · Página "${s.facebook.pageName}"` : ''}${s.instagram ? ` · Instagram @${s.instagram.username}` : ''}.`, 'ok');
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
+      for (const row of todo) {
+        const i = rows.indexOf(row);
         const when = dateFor(i);
-        const tag = `[${i + 1}/${rows.length}] ${row.name}`;
+        const tag = `[${todo.indexOf(row) + 1}/${todo.length}] ${row.name}`;
         const thumb = await makeThumb(row.coverUrl ?? row.videoUrl, !row.coverUrl);
+        const recId = (platform: Platform) => `${platform}-${row.key}`;
         const record = (platform: Platform, status: PostRecord['status'], extra: Partial<PostRecord> = {}) =>
-          directApi.savePost({ id: `${platform}-${row.key}`, platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
+          directApi.savePost({ id: recId(platform), platform, status, video: row.name, fileKey: fileKey(row.video), thumb, publishAt: when.toISOString(), ...extra })
             .catch((e) => say(`Aviso: não salvei no histórico (${e.message}).`, 'error'));
 
-        if (nets.youtube) {
-          const t = row.texts.youtube;
-          try {
+        // Tudo ou nada: o vídeo só fica postado se der certo em todas as redes escolhidas.
+        // O Instagram vai por último porque publica na hora e não pode ser apagado pela API.
+        const order = NETS.filter((n) => nets[n.id]).map((n) => n.id);
+        const done: Net[] = [];
+        let current: Net | undefined;
+        try {
+          if (nets.youtube) {
+            current = 'youtube';
+            const t = row.texts.youtube;
             say(`${tag} → YouTube: começando (${mb(row.video.size)}).`);
-            setNet(row.key, 'youtube', { phase: 'sending', step: 'Iniciando…' });
+            setNet(row.key, 'youtube', { phase: 'sending', step: 'Iniciando…', error: undefined });
             await record('youtube', 'sending', { title: t.title });
             const r = await uploadYouTube(s, row.video, row.cover, { title: t.title, description: t.description, publishAt: when },
               (sent) => setNet(row.key, 'youtube', { sent }), (step) => setNet(row.key, 'youtube', { step }));
             const scheduled = when.getTime() > Date.now() + 60_000;
+            await record('youtube', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
+            done.push('youtube');
             setNet(row.key, 'youtube', { phase: scheduled ? 'scheduled' : 'published', sent: row.video.size, step: undefined, url: r.url, note: r.note });
             say(`${tag} → YouTube: ${scheduled ? `agendado para ${fmtDate(when)}` : 'publicado'}.${r.note ? ` ${r.note}` : ''}`, 'ok');
-            await record('youtube', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
-          } catch (e: any) {
-            setNet(row.key, 'youtube', { phase: 'failed', error: e.message, step: undefined });
-            say(`${tag} → YouTube falhou: ${e.message}`, 'error');
-            await record('youtube', 'failed', { error: e.message });
           }
-        }
-
-        let fbId: string | undefined;
-        if (nets.facebook) {
-          const hidden = false;
-          const net: Net = hidden ? 'instagram' : 'facebook';
-          const t = row.texts.facebook;
-          try {
-            say(`${tag} → Facebook: começando${hidden ? ' (oculto, só para o Instagram puxar o vídeo)' : ''}.`);
-            setNet(row.key, net, { phase: 'sending', step: 'Iniciando…' });
-            if (!hidden) await record('facebook', 'sending', { title: t.title });
-            const r = await uploadFacebook(s, row.video, row.cover, { title: t.title, description: t.description, publishAt: when, hidden },
-              (sent) => setNet(row.key, net, { sent }), (step) => setNet(row.key, net, { step }));
-            fbId = r.id;
-            if (!hidden) {
-              const scheduled = when.getTime() > Date.now() + 11 * 60_000;
-              setNet(row.key, 'facebook', { phase: scheduled ? 'scheduled' : 'published', sent: row.video.size, step: undefined, url: r.url });
-              say(`${tag} → Facebook: ${scheduled ? `agendado para ${fmtDate(when)}` : 'publicado'}.`, 'ok');
-              await record('facebook', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
-            }
-          } catch (e: any) {
-            setNet(row.key, net, { phase: 'failed', error: e.message, step: undefined });
-            say(`${tag} → Facebook falhou: ${e.message}`, 'error');
-            if (!hidden) await record('facebook', 'failed', { error: e.message });
+          if (nets.facebook) {
+            current = 'facebook';
+            const t = row.texts.facebook;
+            say(`${tag} → Facebook: começando.`);
+            setNet(row.key, 'facebook', { phase: 'sending', step: 'Iniciando…', error: undefined });
+            await record('facebook', 'sending', { title: t.title });
+            const r = await uploadFacebook(s, row.video, row.cover, { title: t.title, description: t.description, publishAt: when, hidden: false },
+              (sent) => setNet(row.key, 'facebook', { sent }), (step) => setNet(row.key, 'facebook', { step }));
+            const scheduled = when.getTime() > Date.now() + 11 * 60_000;
+            await record('facebook', scheduled ? 'scheduled' : 'published', { remoteId: r.id, url: r.url });
+            done.push('facebook');
+            setNet(row.key, 'facebook', { phase: scheduled ? 'scheduled' : 'published', sent: row.video.size, step: undefined, url: r.url });
+            say(`${tag} → Facebook: ${scheduled ? `agendado para ${fmtDate(when)}` : 'publicado'}.`, 'ok');
           }
-        }
-
-        void fbId;
-        if (nets.instagram) {
-          try {
-            say(`${tag} → Instagram: enviando o vídeo (${(row.video.size / 1048576).toFixed(1)} MB).`);
-            setNet(row.key, 'instagram', { phase: 'sending', step: 'Iniciando…' });
+          if (nets.instagram) {
+            current = 'instagram';
+            say(`${tag} → Instagram: enviando o vídeo (${mb(row.video.size)}).`);
+            setNet(row.key, 'instagram', { phase: 'sending', step: 'Iniciando…', error: undefined });
             await record('instagram', 'sending', { title: row.texts.instagram.description.split('\n')[0] });
             const r = await uploadInstagram(row.video, row.texts.instagram.description,
               (sent) => setNet(row.key, 'instagram', { sent }), (step) => setNet(row.key, 'instagram', { step }));
+            await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
+            done.push('instagram');
             setNet(row.key, 'instagram', { phase: 'published', step: undefined, url: r.url });
             say(`${tag} → Instagram: publicado agora.`, 'ok');
-            await record('instagram', 'published', { remoteId: r.id, url: r.url, publishAt: new Date().toISOString() });
-          } catch (e: any) {
-            setNet(row.key, 'instagram', { phase: 'failed', error: e.message, step: undefined });
-            say(`${tag} → Instagram falhou: ${e.message}`, 'error');
-            await record('instagram', 'failed', { error: e.message });
           }
+        } catch (e: any) {
+          const failed = current!;
+          const why = `${NET_LABEL[failed]} falhou`;
+          setNet(row.key, failed, { phase: 'failed', error: e.message, step: undefined });
+          say(`${tag} → ${NET_LABEL[failed]} falhou: ${e.message}`, 'error');
+          for (const n of order.slice(order.indexOf(failed) + 1)) setNet(row.key, n, { phase: 'skipped', error: `Cancelado: ${why}.`, step: undefined });
+          // Desfaz o que já subiu (apaga nas redes e no histórico).
+          for (const n of done) {
+            say(`${tag} → ${NET_LABEL[n]}: apagando porque ${why}…`);
+            try {
+              await directApi.deletePost(recId(n), true);
+              setNet(row.key, n, { phase: 'skipped', url: undefined, note: undefined, error: `Desfeito: ${why}.` });
+              say(`${tag} → ${NET_LABEL[n]}: apagado.`, 'ok');
+            } catch (err: any) {
+              setNet(row.key, n, { error: `Não consegui apagar sozinho (${err.message}). Apague à mão.` });
+              say(`${tag} → ${NET_LABEL[n]}: não consegui apagar (${err.message}). Apague à mão.`, 'error');
+            }
+          }
+          await directApi.deletePost(recId(failed)).catch(() => undefined);
+          say(`${tag}: não foi postado. Use "Tentar de novo" no cartão.`, 'error');
         }
       }
       // Vídeo que deu certo em todas as redes sai do rascunho; os que falharam ficam para tentar de novo.
@@ -397,6 +405,7 @@ export function DirectPost() {
             <DirectCard key={r.key} row={r} index={i} total={rows.length} when={dateFor(i)} nets={nets} busy={busy}
               onMove={(d) => move(i, d)}
               onRemove={() => setRows(rows.filter((x) => x.key !== r.key))}
+              onRetry={() => void run(r.key)}
               onText={(net, p) => patchRow(r.key, (x) => ({ ...x, texts: { ...x.texts, [net]: { ...x.texts[net], ...p } } }))}
               onCover={(file) => patchRow(r.key, (x) => ({ ...x, cover: file, coverUrl: URL.createObjectURL(file) }))}
               onMeta={(duration, dims) => patchRow(r.key, (x) => ({ ...x, duration, dims }))}
@@ -427,7 +436,7 @@ function Counter({ text, net, field }: { text: string; net: Net; field: 'title' 
 
 function DirectCard(props: {
   row: Row; index: number; total: number; when: Date; nets: Record<Net, boolean>; busy: boolean;
-  onMove: (d: -1 | 1) => void; onRemove: () => void;
+  onMove: (d: -1 | 1) => void; onRemove: () => void; onRetry: () => void;
   onText: (net: Net, p: Partial<{ title: string; description: string }>) => void;
   onCover: (f: File) => void; onMeta: (duration: number, dims: string) => void;
 }) {
@@ -498,6 +507,11 @@ function DirectCard(props: {
                 );
               })}
             </ul>
+          )}
+          {!busy && Object.values(row.state).some((st) => st?.phase === 'failed') && (
+            <button className="primary" style={{ width: '100%', marginTop: 8 }} onClick={props.onRetry}>
+              <Icon name="upload" size={16} />Tentar de novo
+            </button>
           )}
         </div>
         <div className="texts-col">
